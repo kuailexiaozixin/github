@@ -70,6 +70,15 @@ export GH="$USERPROFILE/AppData/Local/Programs/gh/bin/gh.exe"   # 含中文用�
   2026-09-25 实测本机 7897、7890、10808、10809、1080 五个端口全部 CLOSED。旧文档里"走 7897 最可靠"的写法在有代理客户端的机器上成立，在这台机器上不成立，所以本步把它降为"探测通过才用"。
 - 直连与代理都不通：走第 4 步的多 IP 脚本。
 
+**TLS 层例外（跨三条通路的最后一级兜底）**：若 git 在任一条通路上都因 **TLS 握手失败**而报错（`schannel: AcquireCredentialsHandle failed: SEC_E_NO_CREDENTIALS`——沙箱/受限运行环境把系统证书存储对该进程隔离了，直连与挂代理的 TLS 层都会挂，但 CONNECT 隧道其实已建立），则不再切通路，而是把 git 的 TLS 后端从默认 schannel 换成 openssl 并显式喂 CA bundle，再带原通路前缀重试：
+
+```bash
+CA="C:/Users/<你>/AppData/Roaming/WPS 灵犀/portable-git/PortableGit/mingw64/etc/ssl/certs/ca-bundle.crt"   # PortableGit 自带，按本机实际位置
+git -c http.sslBackend=openssl -c http.sslCAInfo="$CA" -c http.proxy=http://127.0.0.1:<代理端口> push ...
+```
+
+数据与边界见 `references/access.md` 第五节末；`gh` 是 Go 二进制自带 TLS + 系统根证书，**不受此隔离影响**，仍按第 3 步挂代理走通，不必换 openssl。
+
 **产出**：一个确定的通路。
 
 **出口**：进入对应步骤。连续两次同一通路失败就换下一条，不要重复重试同一通路碰运气。代理为何从"默认最可靠"降级为"探测通过才用"，见 `references/push.md`。

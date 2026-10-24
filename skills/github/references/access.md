@@ -116,6 +116,27 @@ Windows 侧三个高频坑：
 - **zip 里有一层子目录**：多数 release 包内是 `app-v1.0.0-windows-x86_64/`。解压后要把二进制从子目录移到目标 bin 根（`mv <子目录>/*.exe . && rmdir <子目录>`），否则调用方找不到。
 - **含中文的 JSON 负载不要写在命令行上**：直接在命令行 `-d '{"description":"中文"}'` 会被 Windows 本地编码破坏，返回 400 `Problems parsing JSON`。把负载写成 UTF-8 文件后用 `--data-binary @payload.json` 发送；`gh api` 那条对应写法是 `--input payload.json`。
 
+### TLS 后端替换：schannel 证书存储被隔离时改用 openssl
+
+**现象**：`curl`/`git` 报 `schannel: AcquireCredentialsHandle failed: SEC_E_NO_CREDENTIALS`（“安全包中没有可用的凭证”）。多见于沙箱/受限运行环境把系统证书存储对该进程隔离了——此时直连、挂代理（CONNECT 隧道其实已建立）都会失败，但 `gh`（Go 二进制，自带 TLS 与系统根证书）通常不受影响。
+
+**做法**：把 git 的 TLS 后端从默认 schannel 换成 openssl，并显式喂 CA bundle（Windows git / PortableGit 自带一份）：
+
+```bash
+# CA bundle 路径（PortableGit 自带，按本机实际位置；本机示例见文末）
+CA="C:/Users/<你>/AppData/Roaming/WPS 灵犀/portable-git/PortableGit/mingw64/etc/ssl/certs/ca-bundle.crt"
+# 单条命令带 -c 前缀，不写进 --global；受限且需代理时叠加 http.proxy
+git -c http.sslBackend=openssl \
+    -c http.sslCAInfo="$CA" \
+    -c http.proxy=http://127.0.0.1:<本机代理端口> \
+    ls-remote https://github.com/<owner>/<repo>.git
+# 等价：GIT_SSL_CAINFO="$CA" git -c http.sslBackend=openssl ...
+```
+
+**出口判据**：`git ls-remote` 能打印远端 HEAD/分支即 TLS 通道打通；`clone`/`push` 同法带上前缀（`-c http.sslBackend=openssl -c http.sslCAInfo="$CA"`）。
+
+**边界**：此招只解决 `git`（它可选 openssl 后端）。`curl` 后端仍是 schannel、受限环境未必有独立 CA 可用，直接取文件不可靠——REST 数据优先用 `gh`（挂 `HTTPS_PROXY`/`HTTP_PROXY` 代理走通）或顶 IP 取端点（本文件第四节）。本机实测可用的 CA bundle：`C:/Users/贺新/AppData/Roaming/WPS 灵犀/portable-git/PortableGit/mingw64/etc/ssl/certs/ca-bundle.crt`。
+
 ## 相关
 
 - 主线流程：`../github-access/SKILL.md`

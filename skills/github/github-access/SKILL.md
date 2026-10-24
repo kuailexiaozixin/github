@@ -130,4 +130,6 @@ gh attestation verify 目标文件 --repo <owner>/<repo>         # 再验证明�
 6. 前缀站兜底：`https://ghfast.top/<完整 GitHub URL>`，取回必做第 5 步校验。
 7. 都不行：把 `curl -v` 的报错原文与日期交给用户，说明是本机网络环境限制，不要连续重试。
 
+**TLS 后端替换（受限/沙箱环境专用）**：若报错是 `schannel: AcquireCredentialsHandle failed: SEC_E_NO_CREDENTIALS`（安全包中没有可用的凭证）——典型于沙箱/受限运行环境把系统证书存储对该进程隔离了，直连与挂代理（CONNECT 隧道其实已建立）都会失败。这时把 git 的 TLS 后端从默认 schannel 换成 openssl 并显式喂 CA bundle，命令与边界见 `references/access.md` 第五节末。此招只救 `git`；`gh` 是 Go 二进制自带 TLS + 系统根证书，通常不受此隔离影响，仍按第 5 步挂代理走通。
+
 **红线**：`http.sslVerify=false` 会去掉中间人防护，只在自签证书的企业代理环境里针对单条命令用（`git -c`），绝不写进 `--global`；不要为了拉一个仓库把全局 git 配置改掉，会影响其它仓库的推送。
