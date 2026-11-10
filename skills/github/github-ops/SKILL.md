@@ -251,7 +251,7 @@ gh api repos/{owner}/{repo}/actions/workflows --jq '.total_count'
 - **`desc: null`**：缺 description，`gh repo edit --description` 补上。
 - **`license` 为 `NOASSERTION`**：GitHub 没认出许可证。常见原因是 `LICENSE` 文件在标准文本后附加了说明段，干扰指纹匹配；把 `LICENSE` 精简为纯标准文本，附加说明移到 README 或 NOTICE，改后该字段应显示具体 SPDX ID。
 - **CI workflow 为 0**：建议补一条最小校验工作流。
-- **要新建仓库**：`gh repo create <name> --public --source <路径> --remote origin --push`；`-g/--gitignore <模板>`、`-l/--license <关键词>` 在建库时就带上，模板与关键词清单见本步后面的 `gh repo gitignore` 与 `gh repo license` 那组命令。
+- **要新建仓库**：`gh repo create <name> --public --source <路径> --remote origin --push`；`-g/--gitignore <模板>`、`-l/--license <关键词>` 在建库时就带上，模板与关键词清单见本步后面的 `gh repo gitignore` 与 `gh repo license` 那组命令。若改用 REST `POST /user/repos` 自己建（例如脚本化发布），先确认凭证：含 `repo` scope 的 classic PAT / OAuth token 可直接建；细粒度 PAT（`github_pat_`）按 GitHub REST 文档需 `Administration`(write) 或 `Repository creation`(write) 之一（后者更窄）；**零 scope 的只读 token 会得到 404 `Not Found`，不是网络故障也不是 403**（GitHub 对无权限资源统一回 404 以防探测）。凭证判别见 `github-push` 第 1 步。
 - **要建分支库（fork）**：判断依据是"只看不 fork"：只读代码用 `gh repo clone` 或免克隆读文件（见 github-access 主线）；要改代码提 PR 才 fork，因为 fork 会在你账号下真建一个仓库，之后要自己同步、自己清理。
 
 ```bash

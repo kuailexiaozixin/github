@@ -24,13 +24,13 @@ Basic 用户名固定为 `x-oauth-basic`，配合 `gho_` 前缀的 OAuth token �
 
 `setx` 写入的是 `HKCU\Environment`，只对新启动的进程生效。已经开着的 shell 里读 `GITHUB_TOKEN` 会读到空，脚本因此加了 `winreg` 兜底：环境变量取不到时直接查注册表。这个兜底解决的是"刚配完 token 就运行脚本"这一个场景；如果注册表里也没有，脚本按 `NO_TOKEN` 退出，不会静默降级成匿名推送。
 
-## 为什么把本地代理降为"探测通过才用"
+## 为什么代理要"当场探"而不是写死
 
-旧版本文档把 `127.0.0.1:7897` 写成默认最可靠通路。2026-09-25 在本机实测：7897、7890、10808、10809、1080 五个常见代理端口全部无进程监听，而 `github.com` 直连可用（`git ls-remote https://github.com/cli/cli HEAD` 正常返回 SHA）。也就是说"有没有本地代理"取决于当场有没有开代理客户端，而不是机器配置。因此 SKILL 第 2 步的写法是先探端口再决定是否走代理，代理在监听时才优先。
+同一台机器两天的读数相反：2026-09-25 五个常见端口全部无监听、`github.com` 直连可用；2026-11-10 则 7897 在监听、`curl` 直连三个 host 全是 000，而 `git` 仍"能用"——因为本机 git 全局配置里写着 `http.proxy=http://127.0.0.1:7897`。有没有代理取决于当场开没开客户端、git 有没有单独配过，都不由机器决定。所以第 2 步先探端口、并先查 `git config --global --get http.proxy`，再决定走哪条。
 
 ## IP 池怎么维护
 
-`push_repo.sh` 的 `IPS` 数组是本技能唯一的 github.com 推送 IP 来源，其它文档不再抄一份列表。失效判定与重测步骤、以及 api / raw / codeload 各 host 的 IP，统一记在 `references/access.md` 的按 host 表里。更新时改数组，然后按 `github-push/SKILL.md` 第 4 步跑一次确认退出码为 0。
+`push_repo.sh` 的 `IPS` 数组是推送脚本用的那一份，取值与 `references/access.md` 第一节 github.com 那一行相同——**两处必须同时改**：脚本要独立可跑，不能运行时去解析 markdown；只改一边就会出现「文档说这枚可用、脚本还在试那枚 400」的分叉。api / raw / codeload 各 host 的 IP 只在 access.md 的表里，脚本不涉及。改完按 `github-push/SKILL.md` 第 4 步跑一次，退出码为 0 才算完。
 
 ## 相关
 

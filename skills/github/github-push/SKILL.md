@@ -5,14 +5,14 @@ description: "GitHub 推送与认证子技能——把本地提交可靠地交�
 
 # GitHub 推送与认证（push）
 
-本地已 commit，要把提交交到 `github.com` 上并确认远端真的收到了。难点不在 git 命令，而在两件事：一是本机 `gh` 与本地代理是否真的可用（2026-09-25 实测：`gh` 不在 PATH，代理端口无一在监听），二是推送通道与核对通道是两个独立域名，一条不通不代表另一条不通。
+本地已 commit，要把提交交到 `github.com` 上并确认远端真的收到了。难点不在 git 命令，而在两件事：一是本机 `gh` 与本地代理是否真的可用（**2026-11-10 复测**：`gh` 目录已在用户 PATH 里但旧终端拿不到、7897 在监听、git 全局配置写死了走该代理；2026-09-25 那天则是都不在 PATH、五个端口全关），二是推送通道与核对通道是两个独立域名，一条不通不代表另一条不通。
 
 认证动作本身（登录、补 scope、配 git 凭证助手、别名）归 `github-cli`，本技能只写推送主线。
 
 ## 前置准备（只列材料）
 
-- 一份可用的 `gh` 可执行文件，路径见第 0 步（实测两处安装都不在 PATH）
-- `GITHUB_TOKEN` 用户环境变量：`github-push/scripts/push_repo.sh` 只认环境变量与注册表 `HKCU\Environment`，不读任何文件。2026-09-25 实测本机该变量长度 40、前缀 `gho_`
+- 一份可用的 `gh` 可执行文件，路径见第 0 步（2026-11-10 复测：目录已进 PATH，但旧终端仍取不到，故一律按绝对路径绑定）
+- `GITHUB_TOKEN` 用户环境变量：`github-push/scripts/push_repo.sh` 只认环境变量与注册表 `HKCU\Environment`，不读任何文件。2026-09-25 实测本机该变量长度 40、前缀 `gho_`，2026-11-10 复测同形。**技能根目录 `github/.env` 里那枚是另一个 token（前缀 `ghp_`、只读 classic PAT），脚本不读它**，别拿它当推送凭证
 - 目标仓库全名 `owner/repo`，且当前凭证对它有所写权限
 - 待推送的本地仓库目录，提交已落在某个分支上
 
@@ -20,10 +20,10 @@ description: "GitHub 推送与认证子技能——把本地提交可靠地交�
 
 **输入**：一台按本技能装过 gh 的 Windows 机器。
 
-**动作**：`gh` 在这台机器上不能直接敲。实测 `command -v gh`（Git Bash）与 `where gh`（cmd）都返回空，两份安装都不在 PATH：
+**动作**：**先按绝对路径绑变量，别赌 PATH。** 2026-11-10 复测：用户 PATH 的最后一项已是 `C:\Users\贺新\AppData\Local\Programs\gh\bin`（写于当日 07:04），新进程 `where gh` 解析得到；但 07:04 之前启动的终端（PowerShell 会话、IDE 内置终端）继承的是旧环境，裸敲 `gh` 仍报「无法将 gh 项识别为 cmdlet」。**「PATH 里有了」与「当前窗口能用」是两件事**，而当前窗口属于哪一类无法自证，所以一律绑绝对路径，两条分支都成立。2026-09-25 那天两条命令都是空输出，结论相同、原因不同。两份安装：
 
 - `C:\Users\<用户名>\AppData\Local\Programs\gh\bin\gh.exe`，gh version 2.101.0 (2026-09-15)——常规调用用这份
-- `D:\WPS灵犀过程文件\gh\bin\gh.exe`，与上一份同版本、同字节数 42755384（2026-09-25 两份同为 2.101.0，SHA-256 前缀同为 `df050891`），是解压副本；上一级目录 `D:\WPS灵犀过程文件\gh\gh.zip`（14938517 字节，2026-09-06）仍是升级前 2.97.0 的原始包，与现在的 exe 已不对应，不要拿它回滚。
+- `D:\WPS灵犀过程文件\gh\bin\gh.exe`，与上一份同版本、同字节数 42755384（SHA-256 前缀同为 `df050891`，2026-11-10 复核仍一致），是解压副本。同目录的 `gh.zip` 是升级前的旧包，与现在的 exe 不对应，别拿它回滚。
 
 先固定一个变量再执行本技能所有命令，避免每条命令重复路径：
 
@@ -46,7 +46,15 @@ export GH="$USERPROFILE/AppData/Local/Programs/gh/bin/gh.exe"   # 含中文用�
 "$GH" auth status --json hosts
 ```
 
-2026-09-25 实测输出为 `github.com` 下两条记录、同一账号，字段含 `state`、`active`、`login`、`tokenSource`、`scopes`、`gitProtocol`：环境变量 `GITHUB_TOKEN` 那条 `active: true`，钥匙串那条 `active: false`，`scopes` 为 `gist, read:org, repo, workflow`。
+2026-09-25 实测输出为 `github.com` 下两条记录、同一账号，字段含 `state`、`active`、`login`、`tokenSource`、`scopes`、`gitProtocol`：环境变量 `GITHUB_TOKEN` 那条 `active: true`，钥匙串那条 `active: false`，`scopes` 为 `gist, read:org, repo, workflow`。2026-11-10 复测同形（两条都 `active` 各一、scope 未变）。
+
+**`state` 是 `error` 时不要直接判成「token 失效」。** 2026-11-10 实测：直连状态下两条都是 `state: "error"`、`login` 为空串、`error` 字段写着 `dial tcp 140.82.121.5:443 ... timeout`，人读的输出却只印一句「The token in GITHUB_TOKEN is invalid」——**同一份凭证挂上 `HTTPS_PROXY` 后立刻变 `state: "success"`、`login: kuailexiaozixin`**。所以读 `--json hosts` 时要看 `error` 字段里的原因，而不是只看 `state`：
+
+| `error` 里是什么 | 含义 | 处置 |
+|---|---|---|
+| 含 `dial tcp` / `timeout` / `connection refused` | 网络没通，凭证未验证 | 回第 2 步选通路，**不要**重新登录或 refresh |
+| 空，`login` 有值 | 正常 | 继续核 scope |
+| 含 `401` / `Bad credentials` | 凭证真的失效 | 走 `github-cli` 第 2 步重新登录 |
 
 要推的是受保护分支或私有仓库，`repo` 已在；要动看板（`github-project`）需要 `project`，当前不在——补法见 `github-cli` 的 `gh auth refresh -s project`。
 
@@ -56,18 +64,29 @@ export GH="$USERPROFILE/AppData/Local/Programs/gh/bin/gh.exe"   # 含中文用�
 
 禁止在本技能任何步骤里执行 `gh auth token` 或 `gh auth status -t`：两者都会把 token 明文写进终端输出与后续日志。上面这条 `--json hosts` 是等价的替代读法。
 
+**写操作前的凭证类型核对（2026-11-10 补，避免拿错 token 白跑一遍）**：`X-OAuth-Scopes` 为空**不等于**细粒度 PAT——零 scope 的 classic PAT 同样返回空。判别只看前缀：`ghp_` classic PAT、`github_pat_` 细粒度 PAT、`gho_` OAuth token。技能根目录 `github/.env` 那枚是零 scope 的 `ghp_`，**只用于读公开仓库与提升额度，禁止 export 成 `GITHUB_TOKEN` 去做建仓 / 推送 / 发 release**；拿它发请求时 `GET /user` 返回 200，写端点却一律 404。只读核对写法（不打印 token 值；IP 用 `references/access.md` 第一节当日可用的 api 前端，或改挂 `HTTPS_PROXY`）：
+
+```bash
+curl -s -D - -o /dev/null --connect-timeout 5 --max-time 15 \
+  --resolve api.github.com:443:140.82.112.5 \
+  -H "Authorization: Bearer $GITHUB_TOKEN" \
+  https://api.github.com/user | grep -iE "^(HTTP/|x-oauth-scopes)"
+```
+
+`x-oauth-scopes` 含 `repo` 才具备建仓与推送能力；为空时回 SKILL.md 第 3 节换凭证，不要跑去改细粒度 token 的权限。
+
 ## 2 选通路
 
 三条通路按下面的判据取一条，**任一命中即触发，不并行尝试**：
 
-- `git ls-remote <仓库地址> HEAD` 能打印 SHA：直连可用，走第 3 步。
+- `git ls-remote <仓库地址> HEAD` 能打印 SHA：直连可用，走第 3 步。**注意 git 可能正在偷偷走代理**：先 `git config --global --get http.proxy` 看一眼，有值说明这条「直连」其实是经代理的，此时 `gh` 与 `curl` 仍可能不通（它们不读 git 配置）。要判"真直连"，加 `-c http.proxy=` 清掉再试一次。
 - 直连不通且本地代理在监听：走第 3 步的代理前缀写法。代理是否在监听要探，不要照抄端口：
 
   ```bash
   python -c "import socket;print('OPEN' if socket.socket().connect_ex(('127.0.0.1',7897))==0 else 'CLOSED')"
   ```
 
-  2026-09-25 实测本机 7897、7890、10808、10809、1080 五个端口全部 CLOSED。旧文档里"走 7897 最可靠"的写法在有代理客户端的机器上成立，在这台机器上不成立，所以本步把它降为"探测通过才用"。
+  **2026-11-10 复测：7897 OPEN**（同日 7890／1080／1081／10808／10809 全 CLOSED，且经 7897 之后 `gh api user` 立即正常）。2026-09-25 那天五个端口全 CLOSED。两天读数相反，判据只能是「当场探」。
 - 直连与代理都不通：走第 4 步的多 IP 脚本。
 
 **TLS 层例外（跨三条通路的最后一级兜底）**：若 git 在任一条通路上都因 **TLS 握手失败**而报错（`schannel: AcquireCredentialsHandle failed: SEC_E_NO_CREDENTIALS`——沙箱/受限运行环境把系统证书存储对该进程隔离了，直连与挂代理的 TLS 层都会挂，但 CONNECT 隧道其实已建立），则不再切通路，而是把 git 的 TLS 后端从默认 schannel 换成 openssl 并显式喂 CA bundle，再带原通路前缀重试：
@@ -81,7 +100,7 @@ git -c http.sslBackend=openssl -c http.sslCAInfo="$CA" -c http.proxy=http://127.
 
 **产出**：一个确定的通路。
 
-**出口**：进入对应步骤。连续两次同一通路失败就换下一条，不要重复重试同一通路碰运气。代理为何从"默认最可靠"降级为"探测通过才用"，见 `references/push.md`。
+**出口**：进入对应步骤。连续两次同一通路失败就换下一条，不要重复重试同一通路碰运气。代理为何改成"探测通过才用"、以及 2026-11-10 复测到的 7897 在监听这一读数，见 `references/push.md` 与 `references/access.md` 第三节。
 
 ## 3 直连或代理推送
 
@@ -124,7 +143,7 @@ bash "<技能根目录>/github-push/scripts/push_repo.sh" <repo本地目录> <ow
 
 脚本内部按四步走：从环境变量或注册表取 token（取不到打印 `NO_TOKEN`）；用 `--resolve github.com:443:<ip>` 逐个探 IP 池；对每个可达 IP 以 `git -c url.https://<ip>/.insteadOf=https://github.com/ -c http.sslVerify=false -c http.version=HTTP/1.1 -c "http.https://<ip>/.extraheader=AUTHORIZATION: basic <base64>" push` 推送；任一成功即停。
 
-IP 池就是这一份数据，随 `references/access.md` 的按 host IP 表一起复核，不在两处各自维护。
+脚本里的 `IPS` 与 `references/access.md` 第一节 github.com 那一行是**同一份数据的两处存放，改一处必须同步另一处**。两处不一致时以 access.md 的当日实测为准。
 
 退出码即脚本的产出：
 

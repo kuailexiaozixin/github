@@ -2,29 +2,34 @@
 
 本文件放**实测数据与判读规则**，主线流程在 `github-access/SKILL.md`。两边不重复：改通道数据只改这里。
 
-## 一、按 host 分列的可用 IP（实测 2026-09-25，本机直连，无代理）
+## 一、按 host 分列的可用 IP（2026-11-10 复测）
 
 `--resolve <host>:443:<ip>` 逐 IP 取一次真实资源，记录 HTTP 状态码与总耗时。判读规则写在表格后面，先看完表格再看规则。
 
+**这一节的「可用」只对 `curl` 顶 IP 成立，不代表直连可用。** 2026-11-10 当场：`curl` 直连四个 host 里三个 000（5 秒超时）、一个 301，而 `git ls-remote` 直连正常——差别来自本机 git 全局配置写死了 `http.proxy=http://127.0.0.1:7897`（见第三节末），不是网络本身。先按下面第二节第 1 步探直连，再决定要不要用这张表。
+
 | host | 候选 IP | 实测状态 | 用途判定 |
 |---|---|---|---|
-| `github.com` | `140.82.112.3` `140.82.113.3` `140.82.113.4` `140.82.114.3` `140.82.116.3` `20.205.243.166` | 200，1.9–2.2s | 可用：网页与 `git clone`/`git fetch` |
+| `github.com` | `140.82.112.3` `140.82.113.3` `140.82.113.4` `140.82.114.3` `140.82.116.3` `20.205.243.166` | 200，2.7–10.0s（2026-11-10 六枚全部 200） | 可用：网页与 `git clone`/`git fetch` |
 | `github.com` | `140.82.112.5` | 404 | 不是 github.com 前端，别顶给它（详见规则 2） |
 | `github.com` | `20.205.243.168` | 400 | 不是 github.com 前端（api 前端） |
-| `api.github.com` | `140.82.112.5` `20.205.243.168` | 200 | 可用：REST API |
+| `api.github.com` | `140.82.112.5` `140.82.112.6` `20.205.243.168` | 200，0.7–1.2s | 可用：REST API |
+| `api.github.com` | `140.82.121.5` `140.82.121.6` | 000（4s 超时） | 当日不通，别用；这两个正是系统 DNS 解析出来的地址 |
 | `api.github.com` | `140.82.112.3` `140.82.113.3` `140.82.113.4` `140.82.114.3` `140.82.116.3` `20.205.243.166` | 301 | 会把请求重定向到 github.com，不能当 api 用 |
-| `raw.githubusercontent.com` | `185.199.108.133` `185.199.109.133` `185.199.110.133` `185.199.111.133` | 200，1.1–1.3s | 可用：raw 文件 |
+| `raw.githubusercontent.com` | `185.199.108.133` `185.199.109.133` `185.199.110.133` `185.199.111.133` | 200，0.2–1.7s | 可用：raw 文件 |
 | `objects.githubusercontent.com` | 同上四个 `185.199.1xx.133` | 404（请求根路径，属正常） | 与 raw 同一组 anycast IP，可用；404 只说明没有该对象键 |
-| `codeload.github.com` | `140.82.116.10` | 200 | 可用：`/archive/...tar.gz` 整仓打包 |
+| `codeload.github.com` | `140.82.116.10` | 200，10.0s（慢，但仍通） | 可用：`/archive/...tar.gz` 整仓打包 |
 | `codeload.github.com` | `140.82.112.3` `140.82.113.4` `20.205.243.166` | 301 | 不能当 codeload 用 |
 
-当日系统 DNS 解析结果（说明"直连是否本来就通"）：`github.com` 解析到 140.82.116.3、`api.github.com` 解析到 140.82.116.5、`raw.githubusercontent.com` 解析到 185.199.108.133 至 185.199.111.133、`codeload.github.com` 解析到 140.82.116.9 与 140.82.116.10。四条直连均返回 200。
+2026-11-10 当日系统 DNS 解析结果：`github.com`→`140.82.121.4`、`api.github.com`→`140.82.121.6`、`raw.githubusercontent.com`→`185.199.108–111.133`、`codeload.github.com`→`140.82.121.9`、`objects.githubusercontent.com`→`185.199.108–111.133`。
+
+**DNS 解出来的地址当天不通，是本表存在的全部理由。** `api.github.com` 被解析到 `140.82.121.6`（实测 000），而 `140.82.112.5`／`140.82.112.6`／`20.205.243.168` 都回 200——同一个 host、同一时段，换 IP 就能通。所以「直连不通」时先顶 IP 再下结论，不要直接判成"墙"。
 
 ### 判读规则
 
 1. **每个 host 有自己的一组前端 IP，不能混用。** 140.82.112/113/114/116 段里既有 web 前端也有 api 前端，用错的表现是 301（被踢到别的 host）或 400/404，**不是网络故障**——这时换 IP 没用，要换 host 对应的那一组。
 2. **`404` 与 `000` 是两件事。** `404` 说明 TCP+TLS+HTTP 全程走通、只是这个前端上没有该资源，属"可用但要换 host"；`000`（curl 无状态码）才是连不上。
-3. **`--resolve` 只对显式指定该 host 的命令生效。** `git clone` 会同时打 `github.com`（智能协议）与 `objects.githubusercontent.com`（大对象），只顶一个会中途失败；`gh` 走 `api.github.com` 且用自己的 DNS，`--resolve` 与 hosts 文件对 gh 均无效，这时用 curl 顶 IP 取同一份数据，写法见本文件第四节末段。
+3. **`--resolve` 只对显式指定该 host 的命令生效。** `git clone` 会同时打 `github.com`（智能协议）与 `objects.githubusercontent.com`（大对象），只顶一个会中途失败；`gh` 走 `api.github.com`，`--resolve` 是 curl 参数、对 gh 不适用；**挂代理时**域名由代理侧解析，本机 hosts 也不参与。所以「gh 打不通」的正确顺序是：先按第三节末的代理前缀挂 `HTTPS_PROXY` 重试 gh（2026-11-10 实测 `gh api user`、`gh release list`、`gh skill publish` 挂上 `http://127.0.0.1:7897` 后全部成功），只有直连与代理两条都不通时才退回 curl 顶 IP，写法见第四节末段。**不要把「gh 不吃 curl 的 --resolve」误读成「gh 在这台机器上走不通」**——后者是错的，且会让脚本放弃 gh 自带的能力。
 4. **IP 会变，日期就是有效期。** 本表超过两周、或换网络环境（换城市/换运营商/挂上代理）后视为失效，按下面第二节重测。挂上代理时**不要**再用 `--resolve`：代理会自己选路，顶 IP 只会绕过代理。
 
 ## 二、重测步骤（约 30 秒，只读请求，不落凭证）
@@ -41,7 +46,8 @@ for ip in 140.82.112.3 140.82.113.3 140.82.113.4 140.82.114.3 140.82.116.3 20.20
   curl -s -o /dev/null -w "%{http_code} %{time_total}s\n" --connect-timeout 4 --max-time 10 \
     --resolve github.com:443:$ip https://github.com/cli/cli
 done
-# api.github.com 用这个 URL，且只测 140.82.112.5 / 20.205.243.168：
+# api.github.com 用这个 URL，测 140.82.112.5 / 140.82.112.6 / 20.205.243.168 这三枚
+# （2026-11-10 三枚都 200；当日 DNS 解出的 140.82.121.5/.6 反而 000）：
 #   https://api.github.com/repos/cli/cli
 # raw 用 https://raw.githubusercontent.com/cli/cli/trunk/README.md 顶 185.199.108–111.133
 
@@ -51,15 +57,27 @@ nslookup github.com     # 一并记录当日 DNS 结果，判断是不是解析�
 
 **出口**：每个 host 至少有一个 IP 返回该类资源应得的状态（web/api/raw 200；objects 允许 404）。全部候选都拿不到时不是 IP 池的问题，按第五节走代理。
 
-## 三、镜像与代理前缀（实测 2026-08，需要重测）
+## 三、镜像与代理前缀（2026-08 首次实测，2026-11-10 复测代理一档）
 
 | 方案 | 上次实测 | 用法与风险 |
 |---|---|---|
-| 本地代理 `127.0.0.1:7897` | 可用，最可靠 | `HTTPS_PROXY=http://127.0.0.1:7897 git clone ...`；端口以本机代理客户端实际监听为准，换端口要先 `curl -x http://127.0.0.1:<端口> -sI https://github.com` 验证 |
+| 本地代理 `127.0.0.1:7897` | **2026-11-10 在监听、可用**（同日 `github.com` 与 `api.github.com` 经它都通；`raw` 直连本来就通）；2026-09-25 那天不在监听 | `HTTPS_PROXY=http://127.0.0.1:7897 git clone ...`；端口以本机代理客户端实际监听为准，换端口要先 `curl -x http://127.0.0.1:<端口> -sI https://github.com` 验证 |
 | `ghfast.top` 前缀 | 可用 | `https://ghfast.top/<完整 GitHub URL>`，用于 release 直链与 raw 文件 |
 | `gh-proxy.com` 前缀 | 不稳定 | 实测返回过"大小正常但无法运行"的截断文件；用它必须做运行验证 |
 | `ghproxy.com`、`hub.fastgit.xyz`、`gh.api.99988866.xyz` | 全部失效 | 不要再试，浪费时间 |
-| 代理端口 `1080/1081/7890/10808/10809` | 本机不可用 | 本机只有 7897 在监听 |
+| 代理端口 `1080/1081/7890/10808/10809` | 2026-11-10 复测仍全部 CLOSED | 当天只有 7897 在监听 |
+
+**代理不是全有全无：本机 git 的全局配置里写着一条代理。** 2026-11-10 实测 `git config --global --get http.proxy` 回 `http://127.0.0.1:7897`，而 `HTTPS_PROXY` 等环境变量在进程里是空的。这造成三种分工，误判几乎都出在这里：
+
+| 通道 | 走不走代理 | 2026-11-10 直连表现 | 关掉代理后的表现 |
+|---|---|---|---|
+| `git`（clone/fetch/push/ls-remote） | 走，来自全局 `http.proxy` | 通 | `-c http.proxy=` 显式清掉后 21 秒超时失败 |
+| `curl` | 不走（无 `.curlrc`、无 `HTTPS_PROXY`） | `github.com`／`api.github.com`／`codeload` 全 000 | 加 `-x http://127.0.0.1:7897` 后 200 |
+| `gh` | 不走（Go 只读环境变量，不读 git 配置） | `api.github.com` 超时 | 加 `HTTPS_PROXY` 后 `api user` 正常 |
+
+所以「`git push` 成功」不能证明网络是通的，也不能证明 `gh` 能用；反过来「`gh` 报错」也不一定是凭证坏了（见 `github-push` 第 1 步的判读）。判断顺序是：先 `git config --global --get http.proxy` 看 git 有没有在偷偷走代理，再 `curl -x` 试代理，最后才怀疑凭证。
+
+**一次 `EOF` 不等于代理坏了。** 2026-11-10 实测过一轮：`gh api user` 挂 7897 报 `Get "https://api.github.com/user": EOF`，端口仍是 OPEN，紧接着同一命令连试三次全部成功。这类瞬时断流在代理链路上很常见，判据是**连试三次**而不是一次定生死；三次全失败才换通路（对应 `github-push` 第 2 步"连续两次同一通路失败就换下一条"）。同理，`curl -x` 偶尔回 403 也可能是出口池轮换，别据此判定 token 无效。
 
 第三方前缀站是中转服务，存在篡改与投毒风险：只用于取**公开**产物，取回后要验（运行 `--version`/`--help`，或对照 release 的 attestation）；不要经它取需要凭证的接口，也不要用它下载源码后直接执行。
 
@@ -77,13 +95,22 @@ GET /repos/{owner}/{repo}/releases/latest               # 注意：这是 JSON �
 
 未登录 60 次/小时、带 token 5000 次/小时；批量遍历 blob 很容易吃满配额，先用 `X-RateLimit-Remaining` 响应头看余量（`gh api -i <端点>` 就能看到）。
 
-### gh 本身打不通时用 curl 顶 IP 取同一份数据
+### gh 直连与代理都不通时才退回 curl 顶 IP
 
-`gh` 走 `api.github.com`，用的是它自己那次解析得到的 IP，本机 hosts 与 `--resolve` 都改不动它（规则 3）。所以 `gh api` 失败而 `curl` 直连成功时，不要重复重试 gh，改用顶 IP 的 curl 取同一个端点：
+`gh` 走 `api.github.com`，`--resolve` 是 curl 参数、对 gh 不适用；挂代理时域名由代理侧解析，本机 hosts 也不参与（规则 3）。**但「gh 直连失败」不等于「gh 不可用」**：2026-11-10 实测 `gh api user`、`gh release list`、`gh skill publish` 在挂上 `HTTPS_PROXY=http://127.0.0.1:7897` 后全部成功。因此顺序是——
+
+1. 先用 shell **直接变量赋值前缀**挂代理重试 gh（不要套 `env` / `timeout` 包装，静默假绿见 `github-skill` 第 7 节）：
 
 ```bash
-# 候选 IP 只取第一节表里 api.github.com 那一组（140.82.112.5 / 20.205.243.168）
-for ip in 140.82.112.5 20.205.243.168; do
+HTTPS_PROXY=http://127.0.0.1:7897 HTTP_PROXY=http://127.0.0.1:7897 \
+  "/c/Users/贺新/AppData/Local/Programs/gh/bin/gh.exe" api user --jq .login
+```
+
+2. 代理也不通，才改用顶 IP 的 curl 取同一个端点：
+
+```bash
+# 候选 IP 只取第一节表里 api.github.com 那一组
+for ip in 140.82.112.5 140.82.112.6 20.205.243.168; do
   printf '%-16s ' "$ip"
   curl -s -o /dev/null -w "%{http_code}\n" --connect-timeout 4 \
     --resolve api.github.com:443:$ip -H "Authorization: Bearer $GITHUB_TOKEN" \

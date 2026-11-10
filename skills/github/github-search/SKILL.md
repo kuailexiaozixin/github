@@ -22,7 +22,7 @@ description: "GitHub 开源项目搜索与筛选子技能——按需求把 GitH
 **动作**：额度决定能不能搜代码、能搜多少次，先量再搜。三条凭证来源按下面顺序取，**先命中先用**：
 
 1. 环境变量 `GITHUB_TOKEN`（2026-09-25 实测本机有值，`gh auth status --json hosts` 显示 scopes 为 `gist, read:org, repo, workflow`）
-2. 本技能根目录的 `github/.env` 里那一行 `GITHUB_TOKEN`（注意位置在 `github/` 目录、与母 `SKILL.md` 同级，不在 `github-search/` 下）。这份是 classic PAT，前缀 `ghp_`、长度 40，实测读公开仓库够用
+2. 本技能根目录的 `github/.env` 里那一行 `GITHUB_TOKEN`（注意位置在 `github/` 目录、与母 `SKILL.md` 同级，不在 `github-search/` 下）。这份是 classic PAT，前缀 `ghp_`、长度 40、**scope 为空**（2026-11-10 用 `X-OAuth-Scopes` 头核对），实测读公开仓库够用——**但也只够读**：拿它建仓、推送、发 release 一律回 404 `Not Found`。本条的顺序只适用于**检索**这一条主线；任何写操作回 `github-push` 第 1 步取含 `repo` 的凭证，不要沿用这里的"先命中先用"。
 3. 都没有：匿名模式
 
 取到之后用一条请求核对真实额度，不要凭记忆：

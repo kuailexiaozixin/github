@@ -11,7 +11,7 @@ description: "GitHub 分支库（fork）子技能——把上游仓库搬到你�
 
 ## 实测环境（本文件里的判断都在这台机器上跑过）
 
-- gh 2.101.0 (2026-09-15)，两份安装都不在 PATH，用绝对路径或先绑定变量（取法见 github-cli 第 1 步）。
+- gh 2.101.0 (2026-09-15)。2026-09-25 两份安装都不在 PATH；2026-11-10 复测目录已进用户 PATH 但旧终端仍取不到。结论不变：用绝对路径或先绑定变量（取法见 github-cli 第 1 步），不要赌当前窗口继承的是哪一代 PATH。
 - 样本：上游 `huang-doudou567/tax-policy-search`，本次建的分支库 `kuailexiaozixin/tax-policy-search`。两侧默认分支都是 `master`，不是 `main`；两边 `master` 同为 `1dea425`。
 - 本文件写到的默认远端行为、`gh repo sync` 回显、`gh repo set-default` 的落盘键，都是 2026-09-25 在这对仓库上实测得到的，实测细节写在对应步骤里。
 

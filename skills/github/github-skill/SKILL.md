@@ -189,8 +189,7 @@ HTTPS_PROXY=http://127.0.0.1:7897 HTTP_PROXY=http://127.0.0.1:7897 \
 
 ### 7. 常见阻塞与处理（2026-09 实测）
 
-**① `gh` 不在 PATH**：本机 gh 2.101.0 装在多用户目录，Git Bash / PowerShell 直接敲 `gh` 会
-`command not found`。用全路径调用：
+**① `gh` 可能不在当前 shell 的 PATH**：2026-11-10 复测用户 PATH 已含 gh 目录，但当日 07:04 之前启动的终端仍拿不到，裸敲 `gh` 报 `command not found`。判不出当前窗口属于哪一类，所以一律用全路径调用：
 
 ```bash
 "/c/Users/贺新/AppData/Local/Programs/gh/bin/gh.exe" skill publish --tag v0.3.0 .
@@ -218,6 +217,21 @@ grep -rlE "apps\.googleusercontent\.com|GOCSPX-|sk-[A-Za-z0-9]{20,}" skills/
 
 ```
 !**/pdfjs-dist/build/
+```
+
+**⑤ 静默假绿：publish 返回 0 却没建 release（2026-11-10 实测）**：本机用 `env VAR=... gh ...`、`timeout ... gh ...` 包装，或把输出重定向到文件时，`gh skill publish --tag vX.Y.Z .` 会**零输出、退出码 0、但不创建任何 release**。这不是凭证权限问题（scopes 含 `repo`），而是包装方式让这条 preview 命令在非交互终端里提前静默退出。正确写法是 shell **直接变量赋值前缀**，输出走终端或 `tee`：
+
+```bash
+cd <发布目录>
+printf 'n\n' | HTTPS_PROXY=http://127.0.0.1:7897 HTTP_PROXY=http://127.0.0.1:7897 \
+  "/c/Users/贺新/AppData/Local/Programs/gh/bin/gh.exe" skill publish --tag v1.33.1 .
+```
+
+发布后**必须回查远端**才算成功，不能只看退出码：
+
+```bash
+HTTPS_PROXY=http://127.0.0.1:7897 HTTP_PROXY=http://127.0.0.1:7897 \
+  "/c/Users/贺新/AppData/Local/Programs/gh/bin/gh.exe" release view v1.33.1 --repo <owner>/<repo>
 ```
 
 ### 8. 认证与网络

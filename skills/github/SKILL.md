@@ -1,6 +1,6 @@
 ---
 name: github
-description: "GitHub 全场景技能（统一入口，含 9 个子技能）。覆盖国内网络下访问与克隆、推送与认证、仓库运维主线、分支库（fork）的建与跟、Projects 看板、Codespaces 云端环境、开源项目搜索筛选、agent 技能管理、gh 自身的登录配置与扩展。触发关键词：访问 GitHub、克隆仓库、git clone 慢/失败、下载 GitHub 文件、GitHub 网络不通、push/推送、git push 失败、多IP推送、GitHub 认证、gh auth、gh 命令、GitHub 维护、处理 issue、分诊、管理 PR、合并 PR、CI 失败、发布 release、上传产物、安全告警、Dependabot、ruleset、fork、分支库、上游同步、gh repo sync、看板、Project 排期、codespace、云端开发环境、搜开源项目、开源项目推荐、github搜索、/github-search、gh skill、技能管理。"
+description: "GitHub 全场景技能（统一入口，含 9 个子技能）。覆盖国内网络下访问与克隆、推送与认证、仓库运维主线、分支库（fork）的建与跟、Projects 看板、Codespaces 云端环境、开源项目搜索筛选、agent 技能管理、gh 自身的登录配置与扩展。触发关键词：访问 GitHub、克隆仓库、git clone 慢/失败、下载 GitHub 文件、GitHub 网络不通、push/推送、git push 失败、多IP推送、GitHub 认证、gh auth、gh 命令、GitHub 维护、处理 issue、分诊、管理 PR、合并 PR、CI 失败、发布 release、上传产物、安全告警、Dependabot、ruleset、fork、分支库、上游同步、gh repo sync、看板、Project 排期、codespace、云端开发环境、搜开源项目、开源项目推荐、github搜索、/github-search、gh skill、技能管理、技能市场、MCP 市场、MCP 连接器、安装技能、安装 MCP。"
 ---
 
 # GitHub 全场景技能
@@ -49,13 +49,15 @@ description: "GitHub 全场景技能（统一入口，含 9 个子技能）。�
 
 ## 3 环境事实（本技能全部命令在这些前提下实测）
 
-以下都是 2026-09-25 在本机的实测值，不是通用设定。换网、换机、升级 gh 之后，先复测对应通路再照文档执行。
+以下都是本机实测值，不是通用设定：标 2026-09-25 的是当天读数，标 2026-11-10 的是复测读数；两者不一致时以 2026-11-10 为准。换网、换机、升级 gh 之后，先复测对应通路再照文档执行。
 
-- `gh` 版本 2.101.0 (2026-09-15)。全部子技能里的参数、`--json` 字段名、退出码都取自这一版本机 `--help` 原文。2026-09-25 从 2.97.0 升上来，升级前后各跑一遍命令树与参数面差分，结论是**纯新增**：子命令零增减、`JSON FIELDS` 零变化，只有 9 条命令多了参数（`--attach` 见于 `issue/pr` 的 `create|edit|comment`，`--worktree` 见于 `pr checkout` 与 `issue develop`，`--search-type` 见于 `search issues`）。升级途径：官方 `gh_2.101.0_windows_amd64.zip`，SHA-256 与 `gh_2.101.0_checksums.txt` 逐字节比过一致（`bc6c8143…192794`），解出 `bin/gh.exe` 覆盖两份安装位。本机没有 winget，`gh upgrade` 这条命令在 gh 里也不存在，别找。
-- 两份 gh 安装（`AppData\Local\Programs\gh\bin` 与 `D:\WPS灵犀过程文件\gh\bin`）是**彼此独立的拷贝，不是链接**，换版本必须两份一起换；`where gh` 与 `command -v gh` 均无输出，**都不在 PATH**，文档里的 `gh` 一律要先绑定绝对路径。
+- `gh` 版本 2.101.0 (2026-09-15)。全部子技能里的参数、`--json` 字段名、退出码都取自这一版本机 `--help` 原文。升级后必须重跑受影响段落的 help 对照。本机没有 winget，`gh` 也没有 `upgrade` 子命令——换版本只能下官方 release 的 zip 解出 `bin/gh.exe`，两份安装一起换。
+- 两份 gh 安装（`AppData\Local\Programs\gh\bin` 与 `D:\WPS灵犀过程文件\gh\bin`）是**彼此独立的拷贝，不是链接**，换版本必须两份一起换。PATH 分两地说：2026-09-25 两条都无输出；**2026-11-10 复测时用户 PATH 的最后一项已含 `C:\Users\贺新\AppData\Local\Programs\gh\bin`（写于当日 07:04），新起的进程 `where gh` 能解析到**，但 07:04 之前已启动的终端（含多数 IDE 内置终端）仍是旧环境，裸敲 `gh` 照样报「无法识别」。所以文档里的 `gh` 仍一律先绑定绝对路径——不是因为它不在 PATH，而是因为**无法从当前 shell 判断它继承的是哪一代 PATH**；绑定之后两条分支都对。
 - 凭证三处：环境变量 `GITHUB_TOKEN` 是 gh 的 OAuth token（前缀 `gho_`，scopes 为 `gist, read:org, repo, workflow`，**不含 `project`**，看板操作会失败，需按 `github-cli` 补 scope）；系统钥匙串同一账号的副本；技能根目录 `github/.env` 里一枚只读 classic PAT（前缀 `ghp_`，读公开仓库与提升 API 额度用）。token 值不打印、不落工作区。
+- **凭证能力边界（2026-11-10 复测，任何写操作前必看）**：`.env` 那枚 `ghp_` 是**零 scope** 的 classic PAT，只能读公开仓库，禁止用于建仓、推送、发 release 或任何写操作；把它 export 成 `GITHUB_TOKEN` 后 `GET /user` 照样返回 200，但 `X-OAuth-Scopes` 为空，写端点一律回 404 `Not Found`（GitHub 对无权限资源统一回 404，不是网络故障）。写操作一律用含 `repo` 的环境变量凭证。`X-OAuth-Scopes` 为空**不能**据此判定「细粒度 PAT」：零 scope 的 classic PAT 同样为空；判别凭证类型只看前缀（`ghp_` classic / `github_pat_` 细粒度 / `gho_` OAuth）或 `github-push` 第 1 步的 scope 核对。细粒度 PAT（`github_pat_`）也能建仓，但需 `Administration`(write) 或 `Repository creation`(write) 之一，见 `github-ops` 建库条目。
 - 额度实测：匿名 Search 10 次/分钟、Core 60 次/小时；带任一 token 为 Search 30 次/分钟、Core 5000 次/小时；代码域检索匿名直接 401，必须带 token。
-- 网络：`github.com` 与 `api.github.com` 当日直连可用；五个常见本地代理端口当日**无监听**，代理按"探测通过才用"处理。IP 池、镜像可用性、重测步骤统一记在 `references/access.md`，其它文档只指过去。
+- **直连与代理要分开记，不要合成一句「网络可用」。** 2026-11-10 复测：`curl` 直连 `github.com`／`api.github.com`／`codeload.github.com` 三个都 000（各挂 5 秒超时），只有 `raw.githubusercontent.com` 回 301；同一时刻 `git ls-remote https://github.com/cli/cli HEAD` **直连可用**、`gh api user` **直连不通**、两者各自挂上 `http://127.0.0.1:7897` 之后都通。成因是本机 git 全局配置写死了 `http.proxy=http://127.0.0.1:7897`（`git config --global --get http.proxy` 可查），git 因此在走代理、curl 与 gh 不走——**「git 通但 gh 不通」不代表网络没问题**，先看这条配置。五个候选端口当日只有 7897 在监听（7890／1080／1081／10808／10809 全 CLOSED）。
+- 2026-09-25 那天 `github.com` 与 `api.github.com` 直连都可用、五个代理端口都没监听。两组读数不矛盾，是两天网络状态不同：代理开没开、出口通不通都随当天变，所以每次任务都要按当场探测结果选通路，不要照抄前一天。
 
 ## 红线
 
