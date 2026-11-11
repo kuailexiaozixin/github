@@ -17,7 +17,7 @@ description: "GitHub Agent 技能管理子技能——用 gh skill 从 GitHub �
 
 ### 技能仓库发布决策（先定方向，避免走错路）
 
-**判断任务方向**：当任务是把**技能仓库**（含 `skills/<name>/SKILL.md` 结构，或 hermes-desktop 这类 agent 技能仓库）的内容推上 GitHub，这是「技能发布」场景，**必须走 `gh skill publish`**，不要用裸 `git push` 手动同步。
+**判断任务方向**：当任务是把**技能仓库**（含 `skills/<name>/SKILL.md` 结构，或 hermes-desktop 这类 agent 技能仓库）的内容推上 GitHub，这是「技能发布」场景，**必须走 `gh skill publish`**，不要用裸 `git push` 手动同步**替代发布**。**这不等于不需要 push**：publish 只打 tag + 建 release、不推代码，正确流程是「push 送代码 → publish 建 release」，见下方端到端流程第 ③⑤ 步。
 
 | 任务 | 正确命令 | 归属 |
 |---|---|---|
@@ -26,7 +26,7 @@ description: "GitHub Agent 技能管理子技能——用 gh skill 从 GitHub �
 | 从 GitHub 安装技能 | `gh skill install owner/repo` | 本子技能 |
 | 搜索技能 | `gh skill search <kw>` | 本子技能 |
 
-> 反模式：`gh skill publish` 会做 agentskills.io 规范校验、建立 `skills/<name>/` 虚拟文件树并创建 release；用 `git push` 手动同步技能文件会缺失这些（缺校验、缺 release、不遵循强制规则），是错误做法。**识别到「技能仓库」就路由到 gh skill publish，不落 github-push。**
+> 反模式：`gh skill publish` 会做 agentskills.io 规范校验、建立 `skills/<name>/` 虚拟文件树并创建 release；**只用** `git push` 手动同步技能文件、不跑 publish，会缺失这些（缺校验、缺 release、不遵循强制规则），是错误做法。**识别到「技能仓库」就路由到 gh skill publish，不落 github-push 作为发布动作。** 反过来只跑 publish、不 push 也是错的（见端到端流程第 ③ 步）：publish 不推代码。
 
 ## 可用命令
 
@@ -124,10 +124,12 @@ gh skill publish --dry-run .
 ```bash
 # 复用本地 git 仓库（不 clone、不碰主工作树）建独立发布工作树
 cd <本地技能git仓库>
-git worktree add --detach <发布目录> main
+git worktree add --detach <发布目录> origin/main
 # 在发布目录里把技能内容重组为 skills/<name>/ 结构（元文件留根）
 # 同步本地最新技能内容，commit，push
 ```
+
+**用 `origin/main` 而不是 `main`**：本地工作分支可能是 `master`（2026-11-11 实测本机技能仓库就没有名为 `main` 的本地分支，写 `main` 会直接报 `invalid reference`）。远端默认分支也要当场确认：`gh api repos/<owner>/<repo> --jq .default_branch`。
 
 发布后清理 worktree：`git worktree remove --force <发布目录>`。
 
@@ -136,25 +138,41 @@ git worktree add --detach <发布目录> main
 把本地技能仓库内容发布到 GitHub（含最新技能内容）的完整流程：
 
 ```bash
+# ⓪ 先问出远端默认分支，下面统一用 $BRANCH，不要假定叫 main
+#    （github-push 第 5 步实测过：cli/cli 的默认分支是 trunk，写 main 会 422）
+BRANCH=$(gh api repos/<owner>/<repo> --jq .default_branch)
+
 # ① 用 worktree 检出含 skills/<name>/ 结构的远端（本地安装目录不改）
-git worktree add --detach <发布目录> origin/main
+git worktree add --detach <发布目录> "origin/$BRANCH"
 
 # ② 把本地最新技能内容同步到 <发布目录>/skills/<name>/（本地保持 root 结构不动）
 #    按「本地文件 -> 远端 skills/<name>/ 对应路径」复制/更新/删除；
 #    只保留真实内容差异，剔除 CRLF/LF 行尾噪声（对 git diff 为空的文件还原为远端版）
 
-# ③ 校验（warning 可接受、error 必改）
+# ③ 【不可跳过】在发布树提交，并把提交推到远端默认分支
+#    gh skill publish 只打 tag + 建 release，不会把本地提交推到远端（2026-11-11 实测）。
+#    漏掉这步会得到「release 已建、命令返回 0，但 tag 指向旧 commit、远端分支没动、
+#    新文件 Not Found」的假绿。按 github-push 第 2/3 步当场探到的通路加前缀。
+git -C <发布目录> add -A
+git -C <发布目录> commit -m "<技能名> vX.Y.Z — <本次改动摘要>"
+git -C <发布目录> push origin "HEAD:$BRANCH"
+
+# ④ 校验（warning 可接受、error 必改）
 gh skill publish --dry-run <发布目录>
 
-# ④ 发布 + 创建 release（--tag 指定 semver 版本即非交互）
+# ⑤ 发布 + 创建 release（--tag 指定 semver 版本即非交互）
 gh skill publish --tag vX.Y.Z <发布目录>
 #    发布前查最新 release：gh release view --json tagName 或 gh release list；版本号顺延（v1.8.3 -> v1.8.4）
 #    仓库需已带 agent-skills topic：gh repo view --json repositoryTopics 确认（已带则 publish 不交互询问）
 
-# ⑤ 验证
+# ⑥ 验证：不能只看 release 存在，要确认远端内容与本地一致
 gh release view vX.Y.Z --repo <owner>/<repo>
+#    内容指纹判据：远端默认分支的 tree sha 必须等于发布树本地 HEAD 的 tree sha
+gh api "repos/<owner>/<repo>/commits/$BRANCH" --jq .commit.tree.sha
+git -C <发布目录> rev-parse HEAD^{tree}
+#    再抽查本次新增的文件在远端确实可见（严格校验返回的是 sha 而非错误 JSON）
 
-# ⑥ 清理
+# ⑦ 清理
 git worktree remove <发布目录>
 ```
 
@@ -165,6 +183,7 @@ git worktree remove <发布目录>
 ### 反模式红线
 
 - **用 `git push` 手动同步技能文件替代 `gh skill publish`** —— 缺 agentskills.io 校验、缺 release、不遵循 `skills/<name>/` 强制规则。技能仓库发布必须走 `gh skill publish`。
+- **只跑 `gh skill publish` 而不先把提交 push 到远端**（2026-11-11 实测踩过）：publish 只打 tag + 建 release，不推代码。跳过 push 会得到 release 已建、返回 0、但 tag 指向旧 commit 且远端默认分支（当次该仓库为 `main`）完全没动的假绿，新文件在远端查不到。**push 与 publish 是两步，不能互相替代，见端到端流程第 ③⑤ 步。**
 - **直接修改本地技能安装目录结构**（把 root 下的技能文件挪进 `skills/<name>/`）会破坏宿主（灵犀等）加载，必须用 worktree 建独立发布工作树。
 - **把 CRLF/LF 行尾噪声当成内容差异提交** —— 同步后对 `git diff` 为空的文件（仅行尾差异）应还原为远端版，避免污染提交。
 - **publish 前不 dry-run** —— 会发布所有被发现技能，先 `--dry-run` 确认无 error 再发布。
@@ -183,9 +202,9 @@ git worktree remove <发布目录>
 
 push 了新代码但没打 release 时，用 `gh release create` 补（`--generate-notes` 自动生成）：
 ```bash
-# <代理端口>：当场探测（github-push/scripts/probe_github_net.py），不要照抄任何固定值
+# <代理端口>：当场扫端口，不要照抄任何固定值；<默认分支>：gh api repos/<owner>/<repo> --jq .default_branch
 HTTPS_PROXY=http://127.0.0.1:<代理端口> HTTP_PROXY=http://127.0.0.1:<代理端口> \
-  gh release create vX.Y.Z --repo <owner>/<repo> --target main --generate-notes --title "..."
+  gh release create vX.Y.Z --repo <owner>/<repo> --target <默认分支> --generate-notes --title "..."
 ```
 
 ### 7. 常见阻塞与处理（2026-09 实测）
@@ -235,11 +254,26 @@ HTTPS_PROXY=http://127.0.0.1:<代理端口> HTTP_PROXY=http://127.0.0.1:<代理�
   "$USERPROFILE/AppData/Local/Programs/gh/bin/gh.exe" release view v1.33.1 --repo <owner>/<repo>
 ```
 
+**⑥ 另一种假绿：release 建了但内容是旧的（2026-11-11 实测）**：与第 ⑤ 条相反，这次 `publish` 打印 `✓ Published v5.18.0`、退出码 0、release 与 tag 都真实存在，但 tag 指向的是**远端已有的旧 commit**，远端默认分支（当次为 `main`）没动，本次新增文件在远端全部 `Not Found`。成因是漏了端到端流程第 ③ 步的 push。判据不能是「release 在不在」，而必须是「远端默认分支的内容指纹（tree sha）等于本地发布树的 tree sha」，并抽查新文件确实可见。回查命令见端到端流程第 ⑥ 步。
+
+**发布说明里的对比链接要核对**：`publish` 自动生成的 `**Full Changelog**: .../compare/<基线>...<新tag>` 基线可能指错（2026-11-11 实测指向上上版 `v5.16.3`，而真正的上一版是 `v5.17.0`）。先用 compare 端点确认基线有效（`status=ahead` 且 `total_commits` 合理），再按需修正说明文字，不要动 tag 与资产：
+
+```bash
+# 读当前说明，确认基线版本
+gh api repos/<owner>/<repo>/releases/tags/vX.Y.Z --jq .body
+# 验证候选基线（应返回 status=ahead）
+gh api repos/<owner>/<repo>/compare/vPREV...vX.Y.Z --jq '.status + " " + (.total_commits|tostring)'
+# 基线指错时只改说明文字：先取 release id，再 PATCH body
+RID=$(gh api repos/<owner>/<repo>/releases/tags/vX.Y.Z --jq .id)
+printf '%s' '{"body":"**Full Changelog**: https://github.com/<owner>/<repo>/compare/vPREV...vX.Y.Z"}' |
+  gh api -X PATCH "repos/<owner>/<repo>/releases/$RID" --input -
+```
+
 ### 8. 认证与网络
 
-- 国内环境 push 走代理：`git -c http.proxy=http://127.0.0.1:<代理端口> ... push`
-- push 卡住（疑似认证等待）时先 `gh auth setup-git` 配置 credential helper
-- gh API 调用（publish/release）走 `HTTPS_PROXY`/`HTTP_PROXY` 环境变量
+- **通路按当场探测结果选，没有「国内环境一律走代理」这回事**：2026-11-11 实测同一台机器上 git 直连被 reset、顶 IP 全断、只有本机代理可用，但 `gh` 直连 `api.github.com` 却是通的；另一天则直连可用、代理全关。按 `SKILL.md` 第 4 步的三行自检和 `github-push` 第 2 步选路，端口不要照抄任何固定值。
+- 需要挂代理时：`git -c http.proxy=http://127.0.0.1:<当场探到的端口> ... push`；`gh` 与 REST 走 `HTTPS_PROXY`/`HTTP_PROXY` 环境变量。挂代理时**不要**再叠加 `--resolve` / `curloptResolve`，否则流量绕过代理。
+- push 卡住（疑似认证等待）时先 `gh auth setup-git` 配置 credential helper。
 
 ## 版本说明
 

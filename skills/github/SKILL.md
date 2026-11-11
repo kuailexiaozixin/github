@@ -29,7 +29,7 @@ description: "GitHub 全场景技能（统一入口，含 9 个子技能）。�
 - 要**装配 agent 技能**（安装/发布/更新 skills）：`github-skill/SKILL.md`
 - 要动 **gh 自身**（登录、补 scope、配 git 凭证助手、别名、扩展、补全）与**账号级对象**（gist、SSH/GPG 公钥）：`github-cli/SKILL.md`
 
-技能仓库的发布不走推送主线，一律用 `gh skill publish`，对应 `github-skill`。
+技能仓库的发布归 `github-skill`：必须用 `gh skill publish` 建 release，不能只靠 `git push` 了事（会缺规范校验与 release）。**但「不走推送主线」不等于「不 push」**：`gh skill publish` 本身不推代码，流程里仍要先把提交 push 到远端，两者是先后两步、不能互相替代，见 `github-skill` 端到端流程第 ③⑤ 步。
 
 子技能之间**允许命令重叠**，这是有意的设计：每份子技能都要能独立读完一条主线，不靠跳转才成立。所以同一条命令会在两三份文件里出现（例如 `gh repo fork`/`gh repo sync` 同时在 github-ops 的仓库生命周期与 github-fork 的分支库跟进里）。重叠处每份都写自己的出口判据，不写"权威在哪一份"，改命令时按校验脚本一次扫全包，不依赖单点引用。
 
@@ -47,16 +47,18 @@ description: "GitHub 全场景技能（统一入口，含 9 个子技能）。�
 
 **出口**：每条链的终点子技能自己的收口步通过。
 
-## 3 环境事实（本技能全部命令在这些前提下实测）
+## 3 历史环境读数（只用于理解机制，不得当作当前状态）
 
-以下都是本机实测值，不是通用设定：标 2026-09-25 的是当天读数，标 2026-11-10 的是复测读数；两者不一致时以 2026-11-10 为准。换网、换机、升级 gh 之后，先复测对应通路再照文档执行。
+> **读法约束**：本节全部是**带日期的历史快照**，记录的是「那天这台机器是什么样」，用于解释「为什么状态会变、为什么必须当场探测」。**不得据此推断当前有没有代理、哪个端口在监听、git 全局配置写了什么、哪个 IP 可用**。任何执行动作一律以第 4 步的当场自检与 `git config --global --get http.proxy` 的实际输出为准。历史上出现过的具体值（端口、IP、配置串）都不是默认值，不要照抄进命令。
+
+标 2026-09-25 的是当天读数，标 2026-11-10 的是复测读数；两者不一致只说明**状态会翻转**，不构成「以哪天为准」的规则。2026-11-11 复测已再次翻转：`http.proxy` 全局配置为空、git 真直连被 reset、顶 IP 候选全不可达、`gh` 直连却可用。所以每趟任务都要重新探测，不要照抄任何一天。
 
 - `gh` 版本 2.101.0 (2026-09-15)。全部子技能里的参数、`--json` 字段名、退出码都取自这一版本机 `--help` 原文。升级后必须重跑受影响段落的 help 对照。本机没有 winget，`gh` 也没有 `upgrade` 子命令——换版本只能下官方 release 的 zip 解出 `bin/gh.exe`，两份安装一起换。
 - 两份 gh 安装（`AppData\Local\Programs\gh\bin` 与 `D:\WPS*\gh\bin`）是**彼此独立的拷贝，不是链接**，换版本必须两份一起换。PATH 分两地说：2026-09-25 两条都无输出；**2026-11-10 复测时用户 PATH 的最后一项已含 `C:\Users\<用户名>\AppData\Local\Programs\gh\bin`（写于当日 07:04），新起的进程 `where gh` 能解析到**，但 07:04 之前已启动的终端（含多数 IDE 内置终端）仍是旧环境，裸敲 `gh` 照样报「无法识别」。所以文档里的 `gh` 仍一律先绑定绝对路径——不是因为它不在 PATH，而是因为**无法从当前 shell 判断它继承的是哪一代 PATH**；绑定之后两条分支都对。
 - 凭证三处：环境变量 `GITHUB_TOKEN` 是 gh 的 OAuth token（前缀 `gho_`，scopes 为 `gist, read:org, repo, workflow`，**不含 `project`**，看板操作会失败，需按 `github-cli` 补 scope）；系统钥匙串同一账号的副本；技能根目录 `github/.env` 里一枚只读 classic PAT（前缀 `ghp_`，读公开仓库与提升 API 额度用）。token 值不打印、不落工作区。
 - **凭证能力边界（2026-11-10 复测，任何写操作前必看）**：`.env` 那枚 `ghp_` 是**零 scope** 的 classic PAT，只能读公开仓库，禁止用于建仓、推送、发 release 或任何写操作；把它 export 成 `GITHUB_TOKEN` 后 `GET /user` 照样返回 200，但 `X-OAuth-Scopes` 为空，写端点一律回 404 `Not Found`（GitHub 对无权限资源统一回 404，不是网络故障）。写操作一律用含 `repo` 的环境变量凭证。`X-OAuth-Scopes` 为空**不能**据此判定「细粒度 PAT」：零 scope 的 classic PAT 同样为空；判别凭证类型只看前缀（`ghp_` classic / `github_pat_` 细粒度 / `gho_` OAuth）或 `github-push` 第 1 步的 scope 核对。细粒度 PAT（`github_pat_`）也能建仓，但需 `Administration`(write) 或 `Repository creation`(write) 之一，见 `github-ops` 建库条目。
 - 额度实测：匿名 Search 10 次/分钟、Core 60 次/小时；带任一 token 为 Search 30 次/分钟、Core 5000 次/小时；代码域检索匿名直接 401，必须带 token。
-- **直连与代理要分开记，不要合成一句「网络可用」。** 2026-11-10 复测：`curl` 直连 `github.com`／`api.github.com`／`codeload.github.com` 三个都 000（各挂 5 秒超时），只有 `raw.githubusercontent.com` 回 301；同一时刻 `git ls-remote https://github.com/cli/cli HEAD` **直连可用**、`gh api user` **直连不通**、两者各自挂上 `http://127.0.0.1:7897` 之后都通。成因是本机 git 全局配置写死了 `http.proxy=http://127.0.0.1:7897`（`git config --global --get http.proxy` 可查），git 因此在走代理、curl 与 gh 不走——**「git 通但 gh 不通」不代表网络没问题**，先看这条配置。五个候选端口当日只有 7897 在监听（7890／1080／1081／10808／10809 全 CLOSED）。
+- **直连与代理要分开记，不要合成一句「网络可用」。** 2026-11-10 当天读数：`curl` 直连 `github.com`／`api.github.com`／`codeload.github.com` 三个都 000（各挂 5 秒超时），只有 `raw.githubusercontent.com` 回 301；同一时刻 `git ls-remote https://github.com/cli/cli HEAD` **直连可用**、`gh api user` **直连不通**、两者各自挂上 `http://127.0.0.1:7897` 之后都通。**那天的**成因是当时 git 全局配置里有一条 `http.proxy=http://127.0.0.1:7897`，git 因此在走代理、curl 与 gh 不走；**该配置 2026-11-11 复测已不存在**，不要据此推断今天的成因。可保留的方法是「`git 通但 gh 不通` 不代表网络没问题，先查 `git config --global --get http.proxy`」。当天五个候选端口只有 7897 在监听（7890／1080／1081／10808／10809 全 CLOSED）。
 - 2026-09-25 那天 `github.com` 与 `api.github.com` 直连都可用、五个代理端口都没监听。两组读数不矛盾，是两天网络状态不同：代理开没开、出口通不通都随当天变，所以每次任务都要按当场探测结果选通路，不要照抄前一天。
 
 ## 4 开工前的连通性自检（30 秒，任何 GitHub 任务都先跑）
@@ -80,7 +82,7 @@ for p in (7897,7890,7896,1080,10808,10809,8080,8888):
 |---|---|---|---|
 | 通 | 通 | — | 最省事，直接干活 |
 | 通 | 不通 | — | `gh` 那条要挂代理（`gh` 不读 git 的 `http.proxy`），见 `github-push` 第 2 步 |
-| 不通 | — | OPEN | 挂代理做；`git` 必须加 `-c http.proxy=`，否则仍会去撞 `.gitconfig` 里那条 |
+| 不通 | — | OPEN | 挂代理做；`git` 加 `-c http.proxy=` 排除全局代理残留的干扰（本机是否真有残留先查 `git config --global --get http.proxy`，没有也不影响加这一项） |
 | 不通 | 不通 | CLOSED | 走顶 IP：`git -c http.curloptResolve=...`；`gh` 的任务改用 curl 顶 IP 取同端点 |
 | 全不通 | 全不通 | CLOSED | 三条通路各试两轮后判定本机网络不可达，把三份失败原文交用户 |
 

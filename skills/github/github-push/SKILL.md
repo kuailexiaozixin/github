@@ -5,7 +5,7 @@ description: "GitHub 推送与认证子技能——把本地提交可靠地交�
 
 # GitHub 推送与认证（push）
 
-本地已 commit，要把提交交到 `github.com` 上并确认远端真的收到了。难点不在 git 命令，而在两件事：一是本机 `gh` 与本地代理是否真的可用（**2026-11-10 复测**：`gh` 目录已在用户 PATH 里但旧终端拿不到、7897 在监听、git 全局配置写死了走该代理；2026-09-25 那天则是都不在 PATH、五个端口全关），二是推送通道与核对通道是两个独立域名，一条不通不代表另一条不通。
+本地已 commit，要把提交交到 `github.com` 上并确认远端真的收到了。难点不在 git 命令，而在两件事：一是本机 `gh` 与本地代理**此刻**是否真的可用（**历史读数**，只说明「状态会变」，不能用来推断当前：2026-09-25 那天 `gh` 不在 PATH、五个代理端口全关；2026-11-10 则 gh 目录已进 PATH 但旧终端拿不到、7897 在监听、git 全局配置里还有一条代理；完整读数见 `SKILL.md` 第 3 节）。一律按第 2 步当场探测。二是推送通道（`github.com`）与核对通道（`api.github.com`）是两个独立域名，一条不通不代表另一条不通。
 
 认证动作本身（登录、补 scope、配 git 凭证助手、别名）归 `github-cli`，本技能只写推送主线。
 
@@ -114,7 +114,7 @@ GIT_TERMINAL_PROMPT=0 timeout 25 git -c http.proxy= \
 
 **代理的两种失效模式，别混为一谈：**
 
-- 代理**进程没在跑**（端口 CLOSED）：此时连 `git push` 都会撞代理几秒后失败，报 `Failed to connect to 127.0.0.1`。本机 `.gitconfig` 里长期写着 `http.proxy=http://127.0.0.1:7897`，代理一关就命中这条——**这是配置残留，不是网络故障**，用 `-c http.proxy=` 清掉即可。
+- 代理**进程没在跑**（端口 CLOSED）、而 git 全局配置里又残留了一条 `http.proxy`：此时连 `git push` 都会先撞那个死端口、几秒后失败，报 `Failed to connect to 127.0.0.1`——**这是配置残留，不是网络故障**，用 `-c http.proxy=` 清掉即可。**先查再清**：`git config --global --get http.proxy`；查不到值就说明本机没有这条残留，2026-11-11 复测本机已无此配置，不要因为文档里出现过就假定它一定存在。
 - 代理**在跑但出口不通**：端口 OPEN、`curl -x` 却超时。这时换端口没用，要换通路。
 
 **TLS 层例外（跨三条通路的最后一级兜底）**：若 git 在任一条通路上都因 **TLS 握手失败**而报错（`schannel: AcquireCredentialsHandle failed: SEC_E_NO_CREDENTIALS`——沙箱/受限运行环境把系统证书存储对该进程隔离了，直连与挂代理的 TLS 层都会挂，但 CONNECT 隧道其实已建立），则不再切通路，而是把 git 的 TLS 后端从默认 schannel 换成 openssl 并显式喂 CA bundle，再带原通路前缀重试：
@@ -181,7 +181,7 @@ bash "<技能根目录>/github-push/scripts/push_repo.sh" <repo本地目录> <ow
 
 脚本内部按三步走：从环境变量或注册表取 token（取不到、或取到 `None` 字面量，都打印 `NO_TOKEN` 退出）；**用 `git ls-remote` 而不是 curl** 逐个探 IP 池——探测和真正推送走同一条 TLS/HTTP 栈，`curl` 通不代表 `git` 通；对每个可达 IP 以 `git -c http.proxy= -c http.curloptResolve=github.com:443:<ip> -c http.sslVerify=false -c http.version=HTTP/1.1 -c "http.https://github.com/.extraheader=AUTHORIZATION: basic <base64>" push` 推送，任一成功即停。
 
-两条关键配置不要改回去：`-c http.proxy=` 清掉本机 `.gitconfig` 里那条固定代理（代理客户端一关，不清掉就会先撞死端口）；`http.curloptResolve` 而不是 `url.<ip>/.insteadOf`（后者六个 IP 全失败，机制见第 2 步的对照表）。每个 IP 的推送有 180 秒超时，探路 25 秒超时。
+两条关键配置不要改回去：`-c http.proxy=` 保证这条命令走真直连、不受 git 全局代理残留影响（**本机是否真有这条残留要当场查 `git config --global --get http.proxy`，2026-11-11 复测为空**；即便查不到，脚本保留清空也无害）；`http.curloptResolve` 而不是 `url.<ip>/.insteadOf`（后者在 2026-11-10 的实测里六个 IP 全失败，机制见第 2 步的对照表）。每个 IP 的推送有 180 秒超时，探路 25 秒超时。
 
 脚本里的候选 IP **不再写死**，由同目录 `probe_github_net.py --candidates` 运行时发现（DoH → 同段邻居 → meta 采样），`references/access.md` 第一节的 IP 表只是历史测量记录、不是脚本来源，两边无需同步。任何 IP 只在当次探测有效，不要抄表里的地址。
 
