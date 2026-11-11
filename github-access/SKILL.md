@@ -1,6 +1,6 @@
 ---
 name: github-access
-description: "GitHub 访问与克隆子技能——国内网络下把代码取到本地：整仓克隆、浅/稀疏/单分支克隆、免克隆读目录与文件、release 与 workflow 产物下载、REST 端点手搓、下载结果校验。覆盖 gh repo clone/read-file/read-dir、gh release download、gh run download、gh attestation download、gh api。触发关键词：访问 GitHub、克隆仓库、git clone 慢/失败、Connection reset、下载 GitHub 文件、不克隆只看代码、取 release 产物、下载 artifact、GitHub 网络不通、raw 打不开。"
+description: "GitHub 访问与克隆子技能——国内网络下把代码取到本地：整仓克隆、浅/稀疏/单分支克隆、免克隆读目录与文件、release 与 workflow 产物下载、REST 端点手搓、下载结果校验；浏览器打不开 GitHub 时诊断并修复系统代理/DNS/hosts 配置、恢复浏览器访问。覆盖 gh repo clone/read-file/read-dir、gh release download、gh run download、gh attestation download、gh api。触发关键词：访问 GitHub、克隆仓库、git clone 慢/失败、Connection reset、下载 GitHub 文件、不克隆只看代码、取 release 产物、下载 artifact、GitHub 网络不通、raw 打不开、浏览器打不开 GitHub、无法访问 GitHub 网站、恢复浏览器访问、修复访问、DNS 污染、代理残留、hosts 钉死。"
 ---
 
 # GitHub 访问与克隆（access）
@@ -131,5 +131,52 @@ gh attestation verify 目标文件 --repo <owner>/<repo>         # 再验证明�
 7. 都不行：把 `curl -v` 的报错原文与日期交给用户，说明是本机网络环境限制，不要连续重试。
 
 **TLS 后端替换（受限/沙箱环境专用）**：若报错是 `schannel: AcquireCredentialsHandle failed: SEC_E_NO_CREDENTIALS`（安全包中没有可用的凭证）——典型于沙箱/受限运行环境把系统证书存储对该进程隔离了，直连与挂代理（CONNECT 隧道其实已建立）都会失败。这时把 git 的 TLS 后端从默认 schannel 换成 openssl 并显式喂 CA bundle，命令与边界见 `references/access.md` 第五节末。此招只救 `git`；`gh` 是 Go 二进制自带 TLS + 系统根证书，通常不受此隔离影响，仍按第 5 步挂代理走通。
+
+## 7 浏览器打不开 GitHub：诊断 → 修复 → 验证（系统代理/DNS 配置层）
+
+**输入**：用户说"浏览器打不开 GitHub / 无法访问 GitHub 网站"，或第 6 步升到顶仍不通、怀疑是系统配置问题。
+
+**边界**：浏览器取代理走的是**系统配置层**，与 git/gh 各自的配置互不相通——所以会出现"浏览器不行但 git 通"、"git 通但 gh 不通"这类错位。修复只动三处系统配置，不碰 git/gh 自己的配置：
+
+1. WinINET 用户代理（注册表 `HKCU\Software\Microsoft\Windows\CurrentVersion\Internet Settings` 的 ProxyEnable / ProxyServer / AutoConfigURL / ProxyOverride）——Edge/Chrome 默认从这里取代理；ProxyServer 有整串与按协议分段两种形态，分段缺 https 段时浏览器对 https 站点直连
+2. 系统 DNS 与 hosts 文件里指向 GitHub 域名的钉死行
+3. WinHTTP（服务层代理，`netsh winhttp show proxy` 可见；不影响浏览器，但会让后台服务/更新连不上）
+
+**动作（诊断，只读零改动）**：
+
+```bash
+python github-access/scripts/repair_github_net.py
+```
+
+（路径相对技能根目录，即本文件同目录下的 `scripts/repair_github_net.py`。）打印：WinINET 当前值与分段拆解、本机代理端口扫描、系统 DNS 与 DoH 对五个 GitHub 域名的解析对比及 443 连通、hosts 钉死行、CONNECT 穿透测试、浏览器等效测试（PowerShell 读 WinINET 设置请求 `https://github.com`），最后给出 findings 与按归因排好序的修复计划。端口、DNS、IP 全部当场探测，不预设优先级，不要照抄任何固定值。
+
+**动作（修复，照诊断计划逐条执行；每次 --apply 前自动备份到 `~/.github-repair-backups/`）**：
+
+```bash
+python github-access/scripts/repair_github_net.py --apply repoint-proxy --port <诊断里 OPEN 的端口>   # 代理端口已换：改写 ProxyServer 并补齐缺失的 https 段
+python github-access/scripts/repair_github_net.py --apply enable-proxy  --port <端口>                # 代理客户端在跑但系统代理没启用：启用（写前先 CONNECT=200 复检）
+python github-access/scripts/repair_github_net.py --apply disable-proxy                              # 代理客户端已弃用：关系统代理并清残留 ProxyServer
+python github-access/scripts/repair_github_net.py --apply clear-pac                                  # PAC 脚本失效：清 AutoConfigURL
+python github-access/scripts/repair_github_net.py --apply flushdns                                   # 刷新 DNS 缓存
+python github-access/scripts/repair_github_net.py --apply set-dns                                    # 系统 DNS 换公共 DNS（默认路由网卡）——需管理员
+python github-access/scripts/repair_github_net.py --apply clean-hosts                                # 只删 hosts 里解析到 GitHub 域名且 443 实测已死的行——需管理员
+python github-access/scripts/repair_github_net.py --apply reset-winhttp                              # 清 WinHTTP 服务层代理残留——需管理员
+```
+
+repoint/enable 写注册表前先对目标端口做 CONNECT=200 复检，复检不过就不写——**绝不把系统代理指向没在监听的端口**；这两类顺带清 AutoConfigURL（PAC 与静态代理互斥）。一次只执行一个动作，跑完再诊断，不要一把梭全 apply。
+
+**产出**：修复后的系统配置 + `~/.github-repair-backups/` 里的备份（backup.json + hosts.bak）+ 验证结果。
+
+**出口**：脚本浏览器等效测试通过（退出码 3），并请用户**在真浏览器里开一次 https://github.com 确认**——PowerShell 测试与浏览器同读 WinINET，但 PAC/扩展/浏览器自带代理设置仍可能不同，真浏览器是最终判据。仍不通时把退出码 4 与诊断输出如实交用户，不要反复 apply。
+
+| 退出码 | 含义 |
+|---|---|
+| 0 | 通路本来就健康，无需修复（plan 模式不改任何东西） |
+| 2 | 已给出修复计划，未做任何改动 |
+| 3 | 修复已执行且验证通过 |
+| 4 | 修复已执行但验证仍不通过 |
+| 5 | 用法错误（缺 --port）或权限不足（set-dns/clean-hosts/reset-winhttp 需管理员） |
+
+**红线**：改系统配置的动作执行前必须向用户确认，说明会改什么、备份在哪、如何回滚（把 backup.json 的值写回注册表，hosts 用 hosts.bak 覆盖回去）；clean-hosts 只删指向已死 IP 的 GitHub 行，绝不动其他域名。防火墙/安全软件拦截、代理客户端自身故障、运营商侧问题不在脚本能力内，诊断到这类归因时如实交用户，不要硬修。
 
 **红线**：`http.sslVerify=false` 会去掉中间人防护，只在自签证书的企业代理环境里针对单条命令用（`git -c`），绝不写进 `--global`；不要为了拉一个仓库把全局 git 配置改掉，会影响其它仓库的推送。

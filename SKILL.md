@@ -1,6 +1,6 @@
 ---
 name: github
-description: "GitHub 全场景技能（统一入口，含 9 个子技能）。覆盖国内网络下访问与克隆、推送与认证、仓库运维主线、分支库（fork）的建与跟、Projects 看板、Codespaces 云端环境、开源项目搜索筛选、agent 技能管理、gh 自身的登录配置与扩展。触发关键词：访问 GitHub、克隆仓库、git clone 慢/失败、下载 GitHub 文件、GitHub 网络不通、push/推送、git push 失败、多IP推送、GitHub 认证、gh auth、gh 命令、GitHub 维护、处理 issue、分诊、管理 PR、合并 PR、CI 失败、发布 release、上传产物、安全告警、Dependabot、ruleset、fork、分支库、上游同步、gh repo sync、看板、Project 排期、codespace、云端开发环境、搜开源项目、开源项目推荐、github搜索、/github-search、gh skill、技能管理、技能市场、MCP 市场、MCP 连接器、安装技能、安装 MCP。"
+description: "GitHub 全场景技能（统一入口，含 9 个子技能）。覆盖国内网络下访问与克隆、推送与认证、仓库运维主线、分支库（fork）的建与跟、Projects 看板、Codespaces 云端环境、开源项目搜索筛选、agent 技能管理、gh 自身的登录配置与扩展、浏览器打不开 GitHub 时的系统代理/DNS/hosts 诊断与修复。触发关键词：访问 GitHub、克隆仓库、git clone 慢/失败、下载 GitHub 文件、GitHub 网络不通、push/推送、git push 失败、多IP推送、GitHub 认证、gh auth、gh 命令、GitHub 维护、处理 issue、分诊、管理 PR、合并 PR、CI 失败、发布 release、上传产物、安全告警、Dependabot、ruleset、fork、分支库、上游同步、gh repo sync、看板、Project 排期、codespace、云端开发环境、搜开源项目、开源项目推荐、github搜索、/github-search、gh skill、技能管理、技能市场、MCP 市场、MCP 连接器、安装技能、安装 MCP、浏览器打不开 GitHub、无法访问 GitHub 网站、恢复浏览器访问、修复访问。"
 ---
 
 # GitHub 全场景技能
@@ -19,7 +19,7 @@ description: "GitHub 全场景技能（统一入口，含 9 个子技能）。�
 
 **动作**：按请求要产出的东西选一个子技能，**九选一分派，命中即停**，不要同时打开两份：
 
-- 要**拿**代码、仓库、单个文件，或反映访问慢/失败：`github-access/SKILL.md`
+- 要**拿**代码、仓库、单个文件，或反映访问慢/失败，或**修**"浏览器打不开 GitHub"（系统代理/DNS/hosts 配置层）：`github-access/SKILL.md`
 - 要**交**代码（push、打 tag、核对远端收到）：`github-push/SKILL.md`
 - 要**管**一个已有仓库（issue、PR、CI、release、仓库设置、安全告警）：`github-ops/SKILL.md`
 - 要**在别人的仓库上做长期改动**（建 fork、跟上游同步、改动放在自己的分支上）：`github-fork/SKILL.md`
@@ -84,7 +84,7 @@ for p in (7897,7890,7896,1080,10808,10809,8080,8888):
 | 不通 | 不通 | CLOSED | 走顶 IP：`git -c http.curloptResolve=...`；`gh` 的任务改用 curl 顶 IP 取同端点 |
 | 全不通 | 全不通 | CLOSED | 三条通路各试两轮后判定本机网络不可达，把三份失败原文交用户 |
 
-细节与 IP 取值见 `github-push` 第 2 步、`references/access.md` 第一/三/四节。
+细节与 IP 取值见 `github-push` 第 2 步、`references/access.md` 第一/三/四节。浏览器打不开而命令行能通（或都通不了）、怀疑系统代理/DNS 配置层问题时，走 `github-access` 第 7 步诊断与修复。
 
 ## 红线
 
