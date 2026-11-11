@@ -67,15 +67,20 @@ nslookup github.com     # 一并记录当日 DNS 结果，判断是不是解析�
 | `ghproxy.com`、`hub.fastgit.xyz`、`gh.api.99988866.xyz` | 全部失效 | 不要再试，浪费时间 |
 | 代理端口 `1080/1081/7890/10808/10809` | 2026-11-10 复测仍全部 CLOSED | 当天只有 7897 在监听 |
 
-**代理不是全有全无：本机 git 的全局配置里写着一条代理。** 2026-11-10 实测 `git config --global --get http.proxy` 回 `http://127.0.0.1:7897`，而 `HTTPS_PROXY` 等环境变量在进程里是空的。这造成三种分工，误判几乎都出在这里：
+**代理不是全有全无：git 可能被一条全局配置单独带着走。** 三类进程读三种不同的配置源，误判几乎都出在这里：
 
-| 通道 | 走不走代理 | 2026-11-10 直连表现 | 关掉代理后的表现 |
-|---|---|---|---|
-| `git`（clone/fetch/push/ls-remote） | 走，来自全局 `http.proxy` | 通 | `-c http.proxy=` 显式清掉后 21 秒超时失败 |
-| `curl` | 不走（无 `.curlrc`、无 `HTTPS_PROXY`） | `github.com`／`api.github.com`／`codeload` 全 000 | 加 `-x http://127.0.0.1:7897` 后 200 |
-| `gh` | 不走（Go 只读环境变量，不读 git 配置） | `api.github.com` 超时 | 加 `HTTPS_PROXY` 后 `api user` 正常 |
+| 通道 | 吃什么配置 | 怎么查 |
+|---|---|---|
+| `git`（clone/fetch/push/ls-remote） | 环境变量 **加** 全局 `http.proxy` | `git config --global --get http.proxy` |
+| `curl` | 只吃环境变量（`HTTPS_PROXY`）与 `-x` | `echo $HTTPS_PROXY` |
+| `gh` | 只吃环境变量（Go 的 net/http 不读 git 配置） | 同上 |
 
-所以「`git push` 成功」不能证明网络是通的，也不能证明 `gh` 能用；反过来「`gh` 报错」也不一定是凭证坏了（见 `github-push` 第 1 步的判读）。判断顺序是：先 `git config --global --get http.proxy` 看 git 有没有在偷偷走代理，再 `curl -x` 试代理，最后才怀疑凭证。
+**脚本必须用 `-c http.proxy=` 把这一条按单条命令清掉**，否则会出现两种假故障：
+
+- **代理客户端没开、配置还留着**：git 先去撞死端口，几秒后报 `Failed to connect to 127.0.0.1`。这看起来像网络坏了，其实是配置残留。2026-11-10 本机就命中过这一条（全局写着 `http.proxy=http://127.0.0.1:7897`，代理关着）。
+- **代理开着但出口不通**：端口 OPEN、连上就断。这时换端口没用，要换通路。
+
+两种的报错形态不同（前者带 `over proxy 127.0.0.1`，后者是连上后被 reset），但都会让人误以为「GitHub 连不上」。所以「`git push` 成功」不能证明网络通，也不能证明 `gh` 能用；反过来「`gh` 报错」也不一定是凭证坏了（见 `github-push` 第 1 步）。判断顺序：先 `git config --global --get http.proxy`，再 `curl -x` 试代理，最后才怀疑凭证。
 
 **一次 `EOF` 不等于代理坏了。** 2026-11-10 实测过一轮：`gh api user` 挂 7897 报 `Get "https://api.github.com/user": EOF`，端口仍是 OPEN，紧接着同一命令连试三次全部成功。这类瞬时断流在代理链路上很常见，判据是**连试三次**而不是一次定生死；三次全失败才换通路（对应 `github-push` 第 2 步"连续两次同一通路失败就换下一条"）。同理，`curl -x` 偶尔回 403 也可能是出口池轮换，别据此判定 token 无效。
 

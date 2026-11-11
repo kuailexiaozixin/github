@@ -21,10 +21,11 @@
 #       不经过 git 自己的 DNS 解析。2026-11-10 实测六个 IP **全部成功**
 #       返回同一个 HEAD。这是本脚本现在用的方案。
 #
-#   另外：本机 git 全局配置里长期留着 http.proxy=127.0.0.1:7897（见
-#   references/access.md 第三节末）。代理客户端一关，所有 git 命令都会先撞
-#   这个死端口、几秒后才报错。脚本用 `-c http.proxy=` 清掉它，避免"代理没开
-#   导致脚本失败"这类和网络无关的假故障。
+#   另外：全局 .gitconfig 里可能留着一条 http.proxy（用户以前为某个代理写的）。
+#   代理客户端一关，所有 git 命令都会先去撞那个死端口、几秒后才报错，看起来
+#   像网络故障，其实是配置残留。脚本一律用 `-c http.proxy=` 把它按单条命令清掉；
+#   要查本机有没有这条，跑 git config --global --get http.proxy（见
+#   references/access.md 第三节末）。
 set -u
 REPO_DIR="$1"
 FULL_NAME="$2"
