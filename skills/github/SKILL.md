@@ -52,7 +52,7 @@ description: "GitHub 全场景技能（统一入口，含 9 个子技能）。�
 以下都是本机实测值，不是通用设定：标 2026-09-25 的是当天读数，标 2026-11-10 的是复测读数；两者不一致时以 2026-11-10 为准。换网、换机、升级 gh 之后，先复测对应通路再照文档执行。
 
 - `gh` 版本 2.101.0 (2026-09-15)。全部子技能里的参数、`--json` 字段名、退出码都取自这一版本机 `--help` 原文。升级后必须重跑受影响段落的 help 对照。本机没有 winget，`gh` 也没有 `upgrade` 子命令——换版本只能下官方 release 的 zip 解出 `bin/gh.exe`，两份安装一起换。
-- 两份 gh 安装（`AppData\Local\Programs\gh\bin` 与 `D:\WPS灵犀过程文件\gh\bin`）是**彼此独立的拷贝，不是链接**，换版本必须两份一起换。PATH 分两地说：2026-09-25 两条都无输出；**2026-11-10 复测时用户 PATH 的最后一项已含 `C:\Users\贺新\AppData\Local\Programs\gh\bin`（写于当日 07:04），新起的进程 `where gh` 能解析到**，但 07:04 之前已启动的终端（含多数 IDE 内置终端）仍是旧环境，裸敲 `gh` 照样报「无法识别」。所以文档里的 `gh` 仍一律先绑定绝对路径——不是因为它不在 PATH，而是因为**无法从当前 shell 判断它继承的是哪一代 PATH**；绑定之后两条分支都对。
+- 两份 gh 安装（`AppData\Local\Programs\gh\bin` 与 `D:\WPS*\gh\bin`）是**彼此独立的拷贝，不是链接**，换版本必须两份一起换。PATH 分两地说：2026-09-25 两条都无输出；**2026-11-10 复测时用户 PATH 的最后一项已含 `C:\Users\<用户名>\AppData\Local\Programs\gh\bin`（写于当日 07:04），新起的进程 `where gh` 能解析到**，但 07:04 之前已启动的终端（含多数 IDE 内置终端）仍是旧环境，裸敲 `gh` 照样报「无法识别」。所以文档里的 `gh` 仍一律先绑定绝对路径——不是因为它不在 PATH，而是因为**无法从当前 shell 判断它继承的是哪一代 PATH**；绑定之后两条分支都对。
 - 凭证三处：环境变量 `GITHUB_TOKEN` 是 gh 的 OAuth token（前缀 `gho_`，scopes 为 `gist, read:org, repo, workflow`，**不含 `project`**，看板操作会失败，需按 `github-cli` 补 scope）；系统钥匙串同一账号的副本；技能根目录 `github/.env` 里一枚只读 classic PAT（前缀 `ghp_`，读公开仓库与提升 API 额度用）。token 值不打印、不落工作区。
 - **凭证能力边界（2026-11-10 复测，任何写操作前必看）**：`.env` 那枚 `ghp_` 是**零 scope** 的 classic PAT，只能读公开仓库，禁止用于建仓、推送、发 release 或任何写操作；把它 export 成 `GITHUB_TOKEN` 后 `GET /user` 照样返回 200，但 `X-OAuth-Scopes` 为空，写端点一律回 404 `Not Found`（GitHub 对无权限资源统一回 404，不是网络故障）。写操作一律用含 `repo` 的环境变量凭证。`X-OAuth-Scopes` 为空**不能**据此判定「细粒度 PAT」：零 scope 的 classic PAT 同样为空；判别凭证类型只看前缀（`ghp_` classic / `github_pat_` 细粒度 / `gho_` OAuth）或 `github-push` 第 1 步的 scope 核对。细粒度 PAT（`github_pat_`）也能建仓，但需 `Administration`(write) 或 `Repository creation`(write) 之一，见 `github-ops` 建库条目。
 - 额度实测：匿名 Search 10 次/分钟、Core 60 次/小时；带任一 token 为 Search 30 次/分钟、Core 5000 次/小时；代码域检索匿名直接 401，必须带 token。
@@ -66,7 +66,7 @@ description: "GitHub 全场景技能（统一入口，含 9 个子技能）。�
 ```bash
 # 三行分别量：git 直连 / gh 直连 / 本机代理端口
 GIT_TERMINAL_PROMPT=0 timeout 15 git -c http.proxy= ls-remote https://github.com/cli/cli HEAD   # 有 SHA = 直连通
-timeout 20 "/c/Users/贺新/AppData/Local/Programs/gh/bin/gh.exe" api user --jq .login              # 有账号名 = gh 通
+timeout 20 "$USERPROFILE/AppData/Local/Programs/gh/bin/gh.exe" api user --jq .login              # 有账号名 = gh 通
 PYTHONIOENCODING=utf-8 python -c "
 import socket
 for p in (7897,7890,7896,1080,10808,10809,8080,8888):

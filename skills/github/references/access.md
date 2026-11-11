@@ -2,6 +2,8 @@
 
 本文件放**实测数据与判读规则**，主线流程在 `github-access/SKILL.md`。两边不重复：改通道数据只改这里。
 
+> **运行时依据**：本节所有 IP 都是**历史测量值（带日期）**，**仅用于理解 GitHub 前端分布**，**不是脚本运行时挑 IP 的来源**。推送/访问时一律由 `probe_github_net.py` 当场重新发现（DoH → 同段邻居 → meta 采样）。**任何 IP 只在当次探测有效，不跨会话、不跨小时**——不要抄本节地址写进脚本，也不要复用上一次运行得到的 IP 列表。
+
 ## 一、按 host 分列的可用 IP（2026-11-10 复测）
 
 `--resolve <host>:443:<ip>` 逐 IP 取一次真实资源，记录 HTTP 状态码与总耗时。判读规则写在表格后面，先看完表格再看规则。
@@ -30,7 +32,7 @@
 1. **每个 host 有自己的一组前端 IP，不能混用。** 140.82.112/113/114/116 段里既有 web 前端也有 api 前端，用错的表现是 301（被踢到别的 host）或 400/404，**不是网络故障**——这时换 IP 没用，要换 host 对应的那一组。
 2. **`404` 与 `000` 是两件事。** `404` 说明 TCP+TLS+HTTP 全程走通、只是这个前端上没有该资源，属"可用但要换 host"；`000`（curl 无状态码）才是连不上。
 3. **`--resolve` 只对显式指定该 host 的命令生效。** `git clone` 会同时打 `github.com`（智能协议）与 `objects.githubusercontent.com`（大对象），只顶一个会中途失败；`gh` 走 `api.github.com`，`--resolve` 是 curl 参数、对 gh 不适用；**挂代理时**域名由代理侧解析，本机 hosts 也不参与。所以「gh 打不通」的正确顺序是：先按第三节末的代理前缀挂 `HTTPS_PROXY` 重试 gh（2026-11-10 实测 `gh api user`、`gh release list`、`gh skill publish` 挂上 `http://127.0.0.1:7897` 后全部成功），只有直连与代理两条都不通时才退回 curl 顶 IP，写法见第四节末段。**不要把「gh 不吃 curl 的 --resolve」误读成「gh 在这台机器上走不通」**——后者是错的，且会让脚本放弃 gh 自带的能力。
-4. **IP 会变，日期就是有效期。** 本表超过两周、或换网络环境（换城市/换运营商/挂上代理）后视为失效，按下面第二节重测。挂上代理时**不要**再用 `--resolve`：代理会自己选路，顶 IP 只会绕过代理。
+4. **IP 会变，日期就是有效期，而且同一枚 IP 隔几十分钟可能就从通变不通**（2026-11 实测同一 IP 5/5 掉到 2/5）。所以本表超过两周、或换网络环境后视为失效；更严格地说，**任何 IP 只在当次探测有效，下次运行必须重探**，不要复用上次结果。挂上代理时**不要**再用 `--resolve`：代理会自己选路，顶 IP 只会绕过代理。
 
 ## 二、重测步骤（约 30 秒，只读请求，不落凭证）
 
@@ -41,7 +43,9 @@ for h in github.com api.github.com raw.githubusercontent.com codeload.github.com
 done
 
 # 2) 不通或很慢时，逐 IP 顶住真实资源再测（换 host 就换 URL 与 IP 段）
-for ip in 140.82.112.3 140.82.113.3 140.82.113.4 140.82.114.3 140.82.116.3 20.205.243.166; do
+#    候选 IP 用探针当场发现，不要照抄固定列表。先取候选，再逐个顶住测：
+#      python github-push/scripts/probe_github_net.py --candidates
+for ip in <探针发现的候选 IP>; do   # 把上一行输出的每一枚 IP 填进来，不要照抄旧固定列表
   printf '%-16s ' "$ip"
   curl -s -o /dev/null -w "%{http_code} %{time_total}s\n" --connect-timeout 4 --max-time 10 \
     --resolve github.com:443:$ip https://github.com/cli/cli
@@ -115,7 +119,7 @@ for p in (7897,7890,7896,1080,10808,10809,8080,8888):
 
 # 用上一步探到 OPEN 的端口
 HTTPS_PROXY=http://127.0.0.1:<端口> HTTP_PROXY=http://127.0.0.1:<端口> \
-  "/c/Users/贺新/AppData/Local/Programs/gh/bin/gh.exe" api user --jq .login
+  "$USERPROFILE/AppData/Local/Programs/gh/bin/gh.exe" api user --jq .login
 ```
 
 2026-11-10 复测：7897 在监听，同日稍后代理客户端关闭后同一命令报 `dial tcp 140.82.121.6:443 ... timeout`——**端口开没开是每时每刻的状态，不是机器属性**，所以只能当场探。
@@ -123,8 +127,9 @@ HTTPS_PROXY=http://127.0.0.1:<端口> HTTP_PROXY=http://127.0.0.1:<端口> \
 2. 代理也不通，才改用顶 IP 的 curl 取同一个端点：
 
 ```bash
-# 候选 IP 只取第一节表里 api.github.com 那一组
-for ip in 140.82.112.5 140.82.112.6 20.205.243.168; do
+# api 候选 IP 运行时解析，不要抄固定表：系统 DNS 若有污染，改用 DoH
+API_IPS=$(python github-push/scripts/probe_github_net.py --resolve api.github.com 2>/dev/null)
+for ip in $API_IPS; do
   printf '%-16s ' "$ip"
   curl -s -o /dev/null -w "%{http_code}\n" --connect-timeout 4 \
     --resolve api.github.com:443:$ip -H "Authorization: Bearer $GITHUB_TOKEN" \
@@ -190,7 +195,7 @@ git -c http.sslBackend=openssl \
 
 **出口判据**：`git ls-remote` 能打印远端 HEAD/分支即 TLS 通道打通；`clone`/`push` 同法带上前缀（`-c http.sslBackend=openssl -c http.sslCAInfo="$CA"`）。
 
-**边界**：此招只解决 `git`（它可选 openssl 后端）。`curl` 后端仍是 schannel、受限环境未必有独立 CA 可用，直接取文件不可靠——REST 数据优先用 `gh`（挂 `HTTPS_PROXY`/`HTTP_PROXY` 代理走通）或顶 IP 取端点（本文件第四节）。本机实测可用的 CA bundle：`C:/Users/贺新/AppData/Roaming/WPS 灵犀/portable-git/PortableGit/mingw64/etc/ssl/certs/ca-bundle.crt`。
+**边界**：此招只解决 `git`（它可选 openssl 后端）。`curl` 后端仍是 schannel、受限环境未必有独立 CA 可用，直接取文件不可靠——REST 数据优先用 `gh`（挂 `HTTPS_PROXY`/`HTTP_PROXY` 代理走通）或顶 IP 取端点（本文件第四节）。本机实测可用的 CA bundle：`C:/Users/<你>/AppData/Roaming/WPS 灵犀/portable-git/PortableGit/mingw64/etc/ssl/certs/ca-bundle.crt`。
 
 ## 相关
 

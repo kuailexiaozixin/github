@@ -20,10 +20,10 @@ description: "GitHub 推送与认证子技能——把本地提交可靠地交�
 
 **输入**：一台按本技能装过 gh 的 Windows 机器。
 
-**动作**：**先按绝对路径绑变量，别赌 PATH。** 2026-11-10 复测：用户 PATH 的最后一项已是 `C:\Users\贺新\AppData\Local\Programs\gh\bin`（写于当日 07:04），新进程 `where gh` 解析得到；但 07:04 之前启动的终端（PowerShell 会话、IDE 内置终端）继承的是旧环境，裸敲 `gh` 仍报「无法将 gh 项识别为 cmdlet」。**「PATH 里有了」与「当前窗口能用」是两件事**，而当前窗口属于哪一类无法自证，所以一律绑绝对路径，两条分支都成立。2026-09-25 那天两条命令都是空输出，结论相同、原因不同。两份安装：
+**动作**：**先按绝对路径绑变量，别赌 PATH。** 2026-11-10 复测：用户 PATH 的最后一项已是 `C:\Users\<用户名>\AppData\Local\Programs\gh\bin`（写于当日 07:04），新进程 `where gh` 解析得到；但 07:04 之前启动的终端（PowerShell 会话、IDE 内置终端）继承的是旧环境，裸敲 `gh` 仍报「无法将 gh 项识别为 cmdlet」。**「PATH 里有了」与「当前窗口能用」是两件事**，而当前窗口属于哪一类无法自证，所以一律绑绝对路径，两条分支都成立。2026-09-25 那天两条命令都是空输出，结论相同、原因不同。两份安装：
 
 - `C:\Users\<用户名>\AppData\Local\Programs\gh\bin\gh.exe`，gh version 2.101.0 (2026-09-15)——常规调用用这份
-- `D:\WPS灵犀过程文件\gh\bin\gh.exe`，与上一份同版本、同字节数 42755384（SHA-256 前缀同为 `df050891`，2026-11-10 复核仍一致），是解压副本。同目录的 `gh.zip` 是升级前的旧包，与现在的 exe 不对应，别拿它回滚。
+- `D:\WPS*\gh\bin\gh.exe`，与上一份同版本、同字节数 42755384（SHA-256 前缀同为 `df050891`，2026-11-10 复核仍一致），是解压副本。同目录的 `gh.zip` 是升级前的旧包，与现在的 exe 不对应，别拿它回滚。
 
 先固定一个变量再执行本技能所有命令，避免每条命令重复路径：
 
@@ -67,8 +67,9 @@ export GH="$USERPROFILE/AppData/Local/Programs/gh/bin/gh.exe"   # 含中文用�
 **写操作前的凭证类型核对（2026-11-10 补，避免拿错 token 白跑一遍）**：`X-OAuth-Scopes` 为空**不等于**细粒度 PAT——零 scope 的 classic PAT 同样返回空。判别只看前缀：`ghp_` classic PAT、`github_pat_` 细粒度 PAT、`gho_` OAuth token。技能根目录 `github/.env` 那枚是零 scope 的 `ghp_`，**只用于读公开仓库与提升额度，禁止 export 成 `GITHUB_TOKEN` 去做建仓 / 推送 / 发 release**；拿它发请求时 `GET /user` 返回 200，写端点却一律 404。只读核对写法（不打印 token 值；IP 用 `references/access.md` 第一节当日可用的 api 前端，或改挂 `HTTPS_PROXY`）：
 
 ```bash
+API_IP=$(python github-push/scripts/probe_github_net.py --resolve api.github.com 2>/dev/null | head -1)
 curl -s -D - -o /dev/null --connect-timeout 5 --max-time 15 \
-  --resolve api.github.com:443:140.82.112.5 \
+  --resolve api.github.com:443:$API_IP \
   -H "Authorization: Bearer $GITHUB_TOKEN" \
   https://api.github.com/user | grep -iE "^(HTTP/|x-oauth-scopes)"
 ```
@@ -129,18 +130,6 @@ git -c http.sslBackend=openssl -c http.sslCAInfo="$CA" -c http.proxy=http://127.
 
 **出口**：进入第 3 步。**每条通路最多试两轮**，两轮都失败就换下一条，不要在同一通路上反复碰运气；三条都不通才判定为本机网络不可达，把三条的失败原文交给用户（见第 6 步）。
 
-**TLS 层例外（跨三条通路的最后一级兜底）**：若 git 在任一条通路上都因 **TLS 握手失败**而报错（`schannel: AcquireCredentialsHandle failed: SEC_E_NO_CREDENTIALS`——沙箱/受限运行环境把系统证书存储对该进程隔离了，直连与挂代理的 TLS 层都会挂，但 CONNECT 隧道其实已建立），则不再切通路，而是把 git 的 TLS 后端从默认 schannel 换成 openssl 并显式喂 CA bundle，再带原通路前缀重试：
-
-```bash
-CA="C:/Users/<你>/AppData/Roaming/WPS 灵犀/portable-git/PortableGit/mingw64/etc/ssl/certs/ca-bundle.crt"   # PortableGit 自带，按本机实际位置
-git -c http.sslBackend=openssl -c http.sslCAInfo="$CA" -c http.proxy=http://127.0.0.1:<代理端口> push ...
-```
-
-数据与边界见 `references/access.md` 第五节末；`gh` 是 Go 二进制自带 TLS + 系统根证书，**不受此隔离影响**，仍按第 3 步挂代理走通，不必换 openssl。
-
-**产出**：一个确定的通路。
-
-**出口**：进入对应步骤。连续两次同一通路失败就换下一条，不要重复重试同一通路碰运气。代理为何改成"探测通过才用"、以及 2026-11-10 复测到的 7897 在监听这一读数，见 `references/push.md` 与 `references/access.md` 第三节。
 
 ## 3 直连或代理推送
 
@@ -187,14 +176,14 @@ git -C <repo> tag -a v1.0.0 -m "v1.0.0" && git -C <repo> push origin v1.0.0
 
 ```bash
 bash "<技能根目录>/github-push/scripts/push_repo.sh" <repo本地目录> <owner/repo> [分支]
-# 技能根目录 = 本仓库里 github/ 那一层，例：C:\Users\贺新\AppData\Roaming\WPS 灵犀\serverdir\user_skills\github
+# 技能根目录 = 本仓库里 github/ 那一层，例：C:\Users\<用户名>\AppData\Roaming\WPS 灵犀\serverdir\user_skills\github
 ```
 
 脚本内部按三步走：从环境变量或注册表取 token（取不到、或取到 `None` 字面量，都打印 `NO_TOKEN` 退出）；**用 `git ls-remote` 而不是 curl** 逐个探 IP 池——探测和真正推送走同一条 TLS/HTTP 栈，`curl` 通不代表 `git` 通；对每个可达 IP 以 `git -c http.proxy= -c http.curloptResolve=github.com:443:<ip> -c http.sslVerify=false -c http.version=HTTP/1.1 -c "http.https://github.com/.extraheader=AUTHORIZATION: basic <base64>" push` 推送，任一成功即停。
 
 两条关键配置不要改回去：`-c http.proxy=` 清掉本机 `.gitconfig` 里那条固定代理（代理客户端一关，不清掉就会先撞死端口）；`http.curloptResolve` 而不是 `url.<ip>/.insteadOf`（后者六个 IP 全失败，机制见第 2 步的对照表）。每个 IP 的推送有 180 秒超时，探路 25 秒超时。
 
-脚本里的 `IPS` 与 `references/access.md` 第一节 github.com 那一行是**同一份数据的两处存放，改一处必须同步另一处**。两处不一致时以 access.md 的当日实测为准。
+脚本里的候选 IP **不再写死**，由同目录 `probe_github_net.py --candidates` 运行时发现（DoH → 同段邻居 → meta 采样），`references/access.md` 第一节的 IP 表只是历史测量记录、不是脚本来源，两边无需同步。任何 IP 只在当次探测有效，不要抄表里的地址。
 
 退出码即脚本的产出：
 
@@ -202,9 +191,10 @@ bash "<技能根目录>/github-push/scripts/push_repo.sh" <repo本地目录> <ow
 |---|---|---|
 | 0 | `PUSH_OK via <ip>`，已推送 | 进第 5 步核对 |
 | 2 | `NO_DIR`，目录不存在或不是仓库 | 校正第一个参数 |
-| 3 | `NO_REACHABLE_IP`，IP 池全不可达 | 回 `references/access.md` 重测 IP 或改走代理 |
+| 3 | `NO_REACHABLE_IP`，IP 池全不可达 | 跑 `probe_github_net.py` 重发现候选 IP 或改走代理 |
 | 4 | `NO_TOKEN` | 回第 1 步确认 token 来源 |
 | 5 | `ALL_IP_FAILED`，连上了但每个 IP 都推失败 | 多为权限或保护分支，进第 6 步 |
+| 6 | `NO_CANDIDATES`，DoH 未能发现任何候选 IP | 检查本机网络，或改走第 2 步的代理通路 |
 
 **产出**：上述退出码之一。
 

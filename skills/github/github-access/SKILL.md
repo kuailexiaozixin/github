@@ -38,7 +38,7 @@ curl -s -o /dev/null -w "%{http_code} %{time_total}s\n" --connect-timeout 5 http
 git ls-remote https://github.com/<owner>/<repo>.git        # 克隆类请求的最终判据
 ```
 
-**动作**：三条通路各自独立探测，**用哪个客户端就先用哪个客户端探**——要 `git clone/fetch/push` 就用 `git ls-remote` 探，不要用 `curl` 的 200 代替（2026-11-10 实测过 `curl` 通而 `git` 不通的同一秒）。探的顺序按成本排：直连 → 代理（先扫常见端口）→ 顶 IP。顶 IP 时 git 要用 `-c http.curloptResolve=github.com:443:<IP>`，**不要用 `url.<ip>/.insteadOf`**（后者在当前网络下六个 IP 全失败，机制见 `references/access.md` 第四节末）。IP 取值见该文件第一节对应 host 那一行；数据超过两周或换网络环境，先跑第二节的 30 秒重测。
+**动作**：三条通路各自独立探测，**用哪个客户端就先用哪个客户端探**——要 `git clone/fetch/push` 就用 `git ls-remote` 探，不要用 `curl` 的 200 代替（2026-11-10 实测过 `curl` 通而 `git` 不通的同一秒）。探的顺序按成本排：直连 → 代理（先扫常见端口）→ 顶 IP。顶 IP 时 git 要用 `-c http.curloptResolve=github.com:443:<IP>`，**不要用 `url.<ip>/.insteadOf`**（后者在当前网络下六个 IP 全失败，机制见 `references/access.md` 第四节末）。IP 由 `probe_github_net.py` 当场发现（DoH → 同段邻居 → meta 采样），不要抄 access.md 表里固定地址；该表仅作历史参考，超过两周即失效。
 
 **产出**：一个可用通道（直连 / 顶 IP / 代理），以及它的适用范围——`--resolve` 只对显式写了该 host 的命令生效。
 

@@ -48,9 +48,16 @@ if [ -z "$TOKEN" ]; then
 fi
 B64=$(printf 'x-oauth-basic:%s' "$TOKEN" | base64 -w0)
 
-# github.com 前端 IP 池，取值与 references/access.md 第一节 github.com 那一行相同
-# （2026-11-10 六枚实测均 200）。20.205.243.168 是 api 前端、对 github.com 回 400，不要加。
-IPS=(140.82.112.3 140.82.113.3 140.82.113.4 140.82.114.3 140.82.116.3 20.205.243.166)
+# 候选 IP 池**不再写死**。运行时由同目录的 probe_github_net.py 当场发现：
+#   DoH(github.com) → 同 /24 段邻居 → api.github.com/meta 采样的 web CIDR
+# 任何 IP 只在当次探测有效，不跨会话、不跨小时复用。
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+mapfile -t CANDIDATES < <(python "$SCRIPT_DIR/probe_github_net.py" --candidates 2>/dev/null)
+IPS=("${CANDIDATES[@]}")
+if [ ${#IPS[@]} -eq 0 ]; then
+  echo "NO_CANDIDATES: DoH 未能发现任何候选 IP（系统 DNS 与 DoH 可能同时不可用），请改走代理或检查本机网络"
+  exit 6
+fi
 
 cd "$REPO_DIR" || { echo "NO_DIR"; exit 2; }
 

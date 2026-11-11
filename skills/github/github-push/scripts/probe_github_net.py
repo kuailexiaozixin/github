@@ -9,8 +9,11 @@
 
     1. 直连          —— 系统 DNS 能不能解析、能不能连上
     2. 本机代理      —— 读系统配置（不是猜端口）；探到就试
-    3. 公共 DNS      —— 系统 DNS 被污染时，用 DoH 换一个真地址
-    4. GitHub 官方段 —— 从 api.github.com/meta 取当前有效的地址段再采样
+    3. 公共 DNS      —— 系统 DNS 被污染时，用 DoH 换一个真地址；并取同 /24 段邻居
+    4. GitHub 官方段 —— 从 api.github.com/meta 取当前有效的 web 地址段再采样
+
+第 3、4 层产出的候选 IP **全部运行时发现、不写死、不跨会话缓存**：顺序只是
+发现顺序、不是优先级；任何一枚 IP 只在当次探测有效，下次运行或隔几小时都须重探。
 
 判据一律用「要用的那个客户端去探」：推代码就用 git ls-remote，取 API 就用 curl 打真端点。
 curl 通不代表 git 通（两者的 DNS 与连接栈不同），这一条是本脚本存在的核心原因。
@@ -30,7 +33,6 @@ import shutil
 import socket
 import subprocess
 import sys
-import tempfile
 
 # ── 常量 ──────────────────────────────────────────────────────────────────
 
@@ -45,11 +47,10 @@ PROXY_PORT_CANDIDATES = (7897, 7890, 7896, 1081, 1080, 10809, 10808, 8080, 8888)
 # 公共 DoH 端点。用于「系统 DNS 被污染」这一层。
 DOH_ENDPOINTS = ("https://223.5.5.5/resolve", "https://1.12.12.12/resolve", "https://dns.alidns.com/resolve")
 
-# api.github.com/meta 拿不到时用的兜底样本。**这些是样本不是全集**，
-# 写在文件里只为「meta 也取不到」的最后一级；不要当成可用性保证。
-FALLBACK_API = ("140.82.112.5", "140.82.112.6", "20.205.243.168")
-FALLBACK_WEB = ("140.82.112.3", "140.82.113.3", "140.82.113.4", "140.82.114.3",
-                "140.82.116.3", "20.205.243.166")
+# 候选 IP 全部运行时发现，不写死任何地址、不跨会话缓存。
+# 发现顺序：DoH(github.com) → 同 /24 段邻居 → api.github.com/meta 采样的 web CIDR。
+# 任何一枚 IP 只在当次探测有效；下次运行、或隔几个小时都须重新发现。
+SAME_SEGMENT_OFFSETS = (-3, -2, -1, 1, 2, 3, 4, 6, 9)   # 绕 DoH 结果取邻近几个，不扫整段
 
 PROBE_TIMEOUT = 6      # 单枚地址的 curl 超时
 GIT_TIMEOUT = 25       # git ls-remote 超时
@@ -293,9 +294,83 @@ def sample_cidrs(cidrs, per_block=3, max_total=24):
     return out[:max_total]
 
 
+# ── 候选 IP 发现（运行时，不写死）─────────────────────────────────────────
+
+def same_segment_neighbors(ip, offsets=SAME_SEGMENT_OFFSETS):
+    """给定 DoH 解析到的一个 IP，返回它同 /24 段内、绕它附近的若干邻居地址。
+
+    不扫整段（最多十来枚），只取邻近几个，命中同段内其它 GitHub 前端即可。
+    返回不含原 IP 本身。
+    """
+    try:
+        net = ipaddress.ip_network("%s/24" % ip, strict=False)
+    except ValueError:
+        return []
+    base = int(net.network_address)
+    host = int(ipaddress.ip_address(ip)) - base
+    out = []
+    for off in offsets:
+        h = host + off
+        if 1 <= h <= 254:
+            cand = str(ipaddress.ip_address(base + h))
+            if cand not in out:
+                out.append(cand)
+    return out
+
+
+def discover_candidates(include_meta=True):
+    """运行时发现候选 IP（github.com web 前端）。不写死、不跨会话缓存。
+
+    顺序仅为发现顺序、非优先级：
+        DoH(github.com) → 同 /24 段邻居 → api.github.com/meta 采样的 web CIDR
+    返回 dict：candidates 去重列表 + 各来源明细。调用方须逐个用 git 实测是否真可达，
+    因为「curl 通 != git 通」，且任一 IP 只在当次有效。
+    """
+    info = {"gh_doh": [], "gh_doh_endpoint": "", "neighbors": [],
+            "meta_web_sampled": [], "meta_web_blocks": 0,
+            "meta_err": "", "candidates": []}
+    seen = set()
+
+    def add(ip):
+        if ip and ip not in seen:
+            seen.add(ip)
+            info["candidates"].append(ip)
+
+    # 1) DoH 解析 github.com
+    gh_ips, gh_ep, _ = doh_resolve("github.com")
+    info["gh_doh"] = gh_ips
+    info["gh_doh_endpoint"] = gh_ep
+    for ip in gh_ips:
+        add(ip)
+        for n in same_segment_neighbors(ip):
+            add(n)
+            if n not in info["neighbors"]:
+                info["neighbors"].append(n)
+
+    # 2) meta 采样（需要 api 前端 IP）
+    if include_meta:
+        api_ips, _, _ = doh_resolve("api.github.com")
+        api_ip = None
+        for a in api_ips:
+            st, _ = probe_https("api.github.com", ip=a, path="/rate_limit", timeout=8)
+            if st.isdigit() and st[0] in "23":
+                api_ip = a
+                break
+        meta, merr = fetch_meta(api_ip)
+        info["meta_err"] = merr or ""
+        if meta:
+            web = meta.get("web") or []
+            info["meta_web_blocks"] = len([c for c in web if ":" not in c])
+            sampled = sample_cidrs(web)
+            info["meta_web_sampled"] = sampled
+            for ip in sampled:
+                add(ip)
+    return info
+
+
 # ── 编排 ──────────────────────────────────────────────────────────────────
 
-def probe(repo_url="https://github.com/cli/cli", want_api=True):
+def probe(repo_url="https://github.com/cli/cli"):
     r = {"git_direct": None, "proxy": None, "doh": None, "cidr": None,
          "system_proxy": None, "ok": False, "prefix": "", "notes": []}
 
@@ -327,53 +402,26 @@ def probe(repo_url="https://github.com/cli/cli", want_api=True):
         r["proxy"] = {"url": "", "source": "", "git_ok": False,
                       "detail": "系统配置里没有可用代理，候选端口里也没有监听"}
 
-    # 3) DoH：系统 DNS 可能被污染
-    for host in ("github.com",):
-        ips, ep, err = doh_resolve(host)
-        r["doh"] = {"host": host, "ips": ips, "endpoint": ep, "err": err}
-        if not ips:
-            continue
-        for ip in ips[:3]:
+    # 3) DoH + 同段邻居 + meta 采样：系统 DNS 可能被污染
+    #    候选全部运行时发现，不写死、不跨会话缓存；顺序仅为发现顺序、非优先级。
+    info = discover_candidates()
+    r["candidates"] = info["candidates"]
+    r["doh"] = {"host": "github.com", "ips": info["gh_doh"],
+                "endpoint": info["gh_doh_endpoint"],
+                "err": "" if info["gh_doh"] else "DoH 全部端点失败"}
+    r["cidr"] = {"source": "api.github.com/meta",
+                 "web_blocks": info["meta_web_blocks"],
+                 "sampled": info["meta_web_sampled"], "err": info["meta_err"]}
+    if not info["candidates"]:
+        r["notes"].append("DoH 未取到任何候选 IP，且 meta 也取不到；系统 DNS 与 DoH 可能同时不可用")
+    else:
+        for ip in info["candidates"]:
             ok3, detail3 = probe_git_direct(repo_url, proxy="",
-                                            resolve="%s:443:%s" % (host, ip))
+                                            resolve="github.com:443:%s" % ip)
             if ok3:
                 r.update(ok=True,
-                         prefix="git -c http.proxy= -c http.curloptResolve=%s:443:%s -c http.sslVerify=false"
-                                % (host, ip),
-                         notes=["系统 DNS 给出的地址不可用，DoH(%s) 解析到 %s 后可用" % (ep, ip)])
-                return r
-
-    # 4) 官方地址段
-    api_ip = None
-    for cand in FALLBACK_API:
-        st, _ = probe_https("api.github.com", ip=cand, path="/rate_limit", timeout=8)
-        if st.isdigit() and st[0] in "23":
-            api_ip = cand
-            break
-    meta, merr = fetch_meta(api_ip)
-    if meta:
-        cidrs_web = meta.get("web") or []
-        cands = sample_cidrs(cidrs_web)
-        r["cidr"] = {"source": "api.github.com/meta via %s" % (api_ip or "direct"),
-                     "web_blocks": len([c for c in cidrs_web if ":" not in c]),
-                     "sampled": cands, "err": ""}
-        for ip in cands:
-            ok4, detail4 = probe_git_direct(repo_url, proxy="",
-                                            resolve="github.com:443:%s" % ip)
-            if ok4:
-                r.update(ok=True,
                          prefix="git -c http.proxy= -c http.curloptResolve=github.com:443:%s -c http.sslVerify=false" % ip,
-                         notes=["官方地址段内 %s 可用（共采样 %d 枚）" % (ip, len(cands))])
-                return r
-    else:
-        r["cidr"] = {"source": "", "web_blocks": 0, "sampled": [], "err": merr}
-        for ip in FALLBACK_WEB:
-            ok5, detail5 = probe_git_direct(repo_url, proxy="",
-                                            resolve="github.com:443:%s" % ip)
-            if ok5:
-                r.update(ok=True,
-                         prefix="git -c http.proxy= -c http.curloptResolve=github.com:443:%s -c http.sslVerify=false" % ip,
-                         notes=["meta 取不到，用内置样本 %s 探通（样本不代表全集）" % ip])
+                         notes=["系统 DNS 可能被污染；运行时经 DoH+同段邻居+meta 采样发现 %s 可用（共 %d 枚候选逐个探）" % (ip, len(info["candidates"]))])
                 return r
 
     r["notes"].append("四层全不通：直连、本机代理、DoH 顶 IP、官方地址段都没连上")
@@ -385,7 +433,25 @@ def main(argv=None):
     ap.add_argument("--repo", default="https://github.com/cli/cli",
                     help="用哪个仓库做 git 探测（默认 GitHub 官方仓库，只读）")
     ap.add_argument("--json", action="store_true", help="输出 JSON")
+    ap.add_argument("--candidates", action="store_true",
+                    help="只输出运行时发现的候选 IP（每行一个），不探测、不推送")
+    ap.add_argument("--resolve", metavar="HOST",
+                    help="输出指定域名的 DNS 解析结果（DoH + 系统 DNS 去重），用于 access.md 示例")
     args = ap.parse_args(argv)
+
+    if args.resolve:
+        host = args.resolve
+        sys_ips, _ = resolve_system(host)
+        doh_ips, ep, _ = doh_resolve(host)
+        # DoH 在前：系统 DNS 可能被污染，head -1 也要拿到可靠的真 IP
+        for ip in dict.fromkeys(doh_ips + sys_ips):   # 去重、保序
+            print(ip)
+        return 0
+
+    if args.candidates:
+        for ip in discover_candidates()["candidates"]:
+            print(ip)
+        return 0
 
     r = probe(args.repo)
     if args.json:

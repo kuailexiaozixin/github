@@ -54,9 +54,11 @@ Basic 用户名固定为 `x-oauth-basic`，配合 `gho_` 前缀的 OAuth token �
 
 同一台机器两天的读数相反：2026-09-25 五个常见端口全部无监听、`github.com` 直连可用；2026-11-10 则 7897 在监听、`curl` 直连三个 host 全是 000，而 `git` 仍"能用"——因为本机 git 全局配置里写着 `http.proxy=http://127.0.0.1:7897`。有没有代理取决于当场开没开客户端、git 有没有单独配过，都不由机器决定。所以第 2 步先探端口、并先查 `git config --global --get http.proxy`，再决定走哪条。
 
-## IP 池怎么维护
+## IP 候选怎么来（不再手工维护固定列表）
 
-`push_repo.sh` 的 `IPS` 数组是推送脚本用的那一份，取值与 `references/access.md` 第一节 github.com 那一行相同——**两处必须同时改**：脚本要独立可跑，不能运行时去解析 markdown；只改一边就会出现「文档说这枚可用、脚本还在试那枚 400」的分叉。api / raw / codeload 各 host 的 IP 只在 access.md 的表里，脚本不涉及。改完按 `github-push/SKILL.md` 第 4 步跑一次，退出码为 0 才算完。
+`push_repo.sh` **不再写死任何 IP**。运行时由同目录的 `probe_github_net.py --candidates` 当场发现候选：DoH 解析 `github.com` → 取同 /24 段邻居 → 解析 `api.github.com` 后取 meta 的 web 地址段采样。脚本拿到候选后逐个用 `git ls-remote` 实测，第一个能通的就用来推。
+
+**因此 `references/access.md` 第一节的 IP 表只是历史测量记录，不是脚本的 IP 来源**；两边不再需要「同步改」。任何 IP 只在当次探测有效，跨会话、跨小时都作废，不要抄表里的地址写进脚本。改完按 `github-push/SKILL.md` 第 4 步跑一次，退出码为 0 才算完。
 
 ## 相关
 

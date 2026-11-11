@@ -183,7 +183,8 @@ git worktree remove <发布目录>
 
 push 了新代码但没打 release 时，用 `gh release create` 补（`--generate-notes` 自动生成）：
 ```bash
-HTTPS_PROXY=http://127.0.0.1:7897 HTTP_PROXY=http://127.0.0.1:7897 \
+# <代理端口>：当场探测（github-push/scripts/probe_github_net.py），不要照抄任何固定值
+HTTPS_PROXY=http://127.0.0.1:<代理端口> HTTP_PROXY=http://127.0.0.1:<代理端口> \
   gh release create vX.Y.Z --repo <owner>/<repo> --target main --generate-notes --title "..."
 ```
 
@@ -192,7 +193,7 @@ HTTPS_PROXY=http://127.0.0.1:7897 HTTP_PROXY=http://127.0.0.1:7897 \
 **① `gh` 可能不在当前 shell 的 PATH**：2026-11-10 复测用户 PATH 已含 gh 目录，但当日 07:04 之前启动的终端仍拿不到，裸敲 `gh` 报 `command not found`。判不出当前窗口属于哪一类，所以一律用全路径调用：
 
 ```bash
-"/c/Users/贺新/AppData/Local/Programs/gh/bin/gh.exe" skill publish --tag v0.3.0 .
+"$USERPROFILE/AppData/Local/Programs/gh/bin/gh.exe" skill publish --tag v0.3.0 .
 ```
 
 **② `--tag` 仍会交互**：即使指定了 `--tag`，publish 在最后仍会问
@@ -223,20 +224,20 @@ grep -rlE "apps\.googleusercontent\.com|GOCSPX-|sk-[A-Za-z0-9]{20,}" skills/
 
 ```bash
 cd <发布目录>
-printf 'n\n' | HTTPS_PROXY=http://127.0.0.1:7897 HTTP_PROXY=http://127.0.0.1:7897 \
-  "/c/Users/贺新/AppData/Local/Programs/gh/bin/gh.exe" skill publish --tag v1.33.1 .
+printf 'n\n' | HTTPS_PROXY=http://127.0.0.1:<代理端口> HTTP_PROXY=http://127.0.0.1:<代理端口> \
+  "$USERPROFILE/AppData/Local/Programs/gh/bin/gh.exe" skill publish --tag v1.33.1 .
 ```
 
 发布后**必须回查远端**才算成功，不能只看退出码：
 
 ```bash
-HTTPS_PROXY=http://127.0.0.1:7897 HTTP_PROXY=http://127.0.0.1:7897 \
-  "/c/Users/贺新/AppData/Local/Programs/gh/bin/gh.exe" release view v1.33.1 --repo <owner>/<repo>
+HTTPS_PROXY=http://127.0.0.1:<代理端口> HTTP_PROXY=http://127.0.0.1:<代理端口> \
+  "$USERPROFILE/AppData/Local/Programs/gh/bin/gh.exe" release view v1.33.1 --repo <owner>/<repo>
 ```
 
 ### 8. 认证与网络
 
-- 国内环境 push 走代理：`git -c http.proxy=http://127.0.0.1:7897 ... push`
+- 国内环境 push 走代理：`git -c http.proxy=http://127.0.0.1:<代理端口> ... push`
 - push 卡住（疑似认证等待）时先 `gh auth setup-git` 配置 credential helper
 - gh API 调用（publish/release）走 `HTTPS_PROXY`/`HTTP_PROXY` 环境变量
 
