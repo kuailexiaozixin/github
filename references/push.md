@@ -52,7 +52,7 @@ Basic 用户名固定为 `x-oauth-basic`，配合 `gho_` 前缀的 OAuth token �
 
 ## 为什么代理要"当场探"而不是写死
 
-同一台机器两天的读数相反：2026-09-25 五个常见端口全部无监听、`github.com` 直连可用；2026-11-10 则 7897 在监听、`curl` 直连三个 host 全是 000，而 `git` 仍"能用"——因为本机 git 全局配置里写着 `http.proxy=http://127.0.0.1:7897`。有没有代理取决于当场开没开客户端、git 有没有单独配过，都不由机器决定。所以第 2 步先探端口、并先查 `git config --global --get http.proxy`，再决定走哪条。
+同一台机器几天的读数都相反（以下均为**历史读数，不是当前状态**）：2026-09-25 五个常见端口全部无监听、`github.com` 直连可用；2026-11-10 则 7897 在监听、`curl` 直连三个 host 全是 000，而 `git` 仍"能用"——那天是因为 git 全局配置里有一条 `http.proxy`；2026-11-11 该配置已为空、git 真直连被 reset、顶 IP 候选全部不可达，但 `gh` 直连可用。有没有代理取决于当场开没开客户端、git 有没有单独配过，都不由机器决定。所以第 2 步先探端口、并先查 `git config --global --get http.proxy`，再决定走哪条；**不要拿任何一天的读数当默认值**。
 
 ## IP 候选怎么来（不再手工维护固定列表）
 
@@ -60,6 +60,25 @@ Basic 用户名固定为 `x-oauth-basic`，配合 `gho_` 前缀的 OAuth token �
 
 **因此 `references/access.md` 第一节的 IP 表只是历史测量记录，不是脚本的 IP 来源**；两边不再需要「同步改」。任何 IP 只在当次探测有效，跨会话、跨小时都作废，不要抄表里的地址写进脚本。改完按 `github-push/SKILL.md` 第 4 步跑一次，退出码为 0 才算完。
 
+## 应急反例：git 层全断时用 Git Data API 补推（不是常规通路）
+
+2026-11-11 遇到过一次：git 真直连被 reset、运行时发现的候选 IP 两轮全部连不上、只有本机代理能推，但 `gh` 直连 `api.github.com` 可用，且那一次任务**当次**另有「不开代理」的约束。当时用 GitHub 的 Git Data API 完成了推送：`POST /git/blobs` 逐文件建对象 → `POST /git/trees`（带 `base_tree` 为远端默认分支当前 tree）→ `POST /git/commits`（`parents` 为远端默认分支当前 SHA）→ `PATCH /git/refs/heads/<默认分支>`（`force=false` 快进）。当次该仓库默认分支是 `main`；换仓库先查 `.default_branch`，不要照抄。
+
+**这是应急手段，不写进 `github-push` 主流程，理由是使用它有实质代价**：
+
+- **绕开推送保护**：GitHub 的密钥扫描与规则拦截（GH013）挂在 git push 链路上，用 API 直接建对象可能不触发。用它之前必须自行按 `github-skill` 第 7 节③扫一遍凭据字面量，不能省。
+- **绕过本地校验链**：不经过本地钩子、不经过 `push_repo.sh` 的多 IP 探测与 `git ls-remote` 预探。
+- **本地不留对象**：commit 由 API 在远端创建，本地对象库没有它，`origin/main` 会停在旧 SHA，直到下次 `git fetch`。试图用 API 返回的元数据在本地重建 commit 对象，SHA 也对不上（GitHub 对象含额外字段），**不要伪造**。
+- **作者信息变化**：commit 的 author/committer 变成 API 调用账号与服务器时间，与本地提交不同。
+
+**「不开代理」不是本技能的长期规矩**：那只是某一次任务的当次约束。正常情况按第 2 步当场探测选通路，代理可用就用代理，不要为了绕开它去走这条路。
+
+若确需使用，必须守住三道门：
+
+1. `PATCH /git/refs/heads/<默认分支>` 之前先 `GET` 该 ref，确认它仍等于预期的基底 SHA（防并发覆盖别人刚推的提交）。
+2. **内容指纹硬门**：API 返回的 `tree.sha` 必须等于本地发布树 `git rev-parse HEAD^{tree}`，不一致立即中止、绝不写 ref。
+3. `force=false`，只允许快进；默认分支与 tag 都不做强制更新。发布后按 `github-skill` 端到端流程第 ⑥ 步回查远端内容，不能只看 API 返回 201。
+
 ## 相关
 
-流程：`github-push/SKILL.md`。IP 数据与重测：`references/access.md`。
+流程：`github-push/SKILL.md`。IP 数据与重测：`references/access.md`。技能仓库发布流程与假绿判据：`github-skill/SKILL.md`。
