@@ -59,6 +59,33 @@ description: "GitHub 全场景技能（统一入口，含 9 个子技能）。�
 - **直连与代理要分开记，不要合成一句「网络可用」。** 2026-11-10 复测：`curl` 直连 `github.com`／`api.github.com`／`codeload.github.com` 三个都 000（各挂 5 秒超时），只有 `raw.githubusercontent.com` 回 301；同一时刻 `git ls-remote https://github.com/cli/cli HEAD` **直连可用**、`gh api user` **直连不通**、两者各自挂上 `http://127.0.0.1:7897` 之后都通。成因是本机 git 全局配置写死了 `http.proxy=http://127.0.0.1:7897`（`git config --global --get http.proxy` 可查），git 因此在走代理、curl 与 gh 不走——**「git 通但 gh 不通」不代表网络没问题**，先看这条配置。五个候选端口当日只有 7897 在监听（7890／1080／1081／10808／10809 全 CLOSED）。
 - 2026-09-25 那天 `github.com` 与 `api.github.com` 直连都可用、五个代理端口都没监听。两组读数不矛盾，是两天网络状态不同：代理开没开、出口通不通都随当天变，所以每次任务都要按当场探测结果选通路，不要照抄前一天。
 
+## 4 开工前的连通性自检（30 秒，任何 GitHub 任务都先跑）
+
+**不要假定「上次能连所以这次也能」。** 这台机器一天之内出现过：直连通、直连通而 `gh` 不通、只有代理通、直连与代理都不通但顶 IP 通、以及代理客户端关掉后 `git` 撞死端口。任何写死的通路都会在某一刻失效。
+
+```bash
+# 三行分别量：git 直连 / gh 直连 / 本机代理端口
+GIT_TERMINAL_PROMPT=0 timeout 15 git -c http.proxy= ls-remote https://github.com/cli/cli HEAD   # 有 SHA = 直连通
+timeout 20 "/c/Users/贺新/AppData/Local/Programs/gh/bin/gh.exe" api user --jq .login              # 有账号名 = gh 通
+PYTHONIOENCODING=utf-8 python -c "
+import socket
+for p in (7897,7890,7896,1080,10808,10809,8080,8888):
+    s=socket.socket(); s.settimeout(0.15)
+    print(p,'OPEN' if s.connect_ex(('127.0.0.1',p))==0 else 'CLOSED'); s.close()"
+```
+
+按结果分派，**三条互不替代**：
+
+| git 直连 | gh | 代理 | 含义与做法 |
+|---|---|---|---|
+| 通 | 通 | — | 最省事，直接干活 |
+| 通 | 不通 | — | `gh` 那条要挂代理（`gh` 不读 git 的 `http.proxy`），见 `github-push` 第 2 步 |
+| 不通 | — | OPEN | 挂代理做；`git` 必须加 `-c http.proxy=`，否则仍会去撞 `.gitconfig` 里那条 |
+| 不通 | 不通 | CLOSED | 走顶 IP：`git -c http.curloptResolve=...`；`gh` 的任务改用 curl 顶 IP 取同端点 |
+| 全不通 | 全不通 | CLOSED | 三条通路各试两轮后判定本机网络不可达，把三份失败原文交用户 |
+
+细节与 IP 取值见 `github-push` 第 2 步、`references/access.md` 第一/三/四节。
+
 ## 红线
 
 - 破坏性动作（force push、删远端分支、删仓库、删已发布 release、`gh repo sync --force`）执行前须向用户确认，说明会丢什么。

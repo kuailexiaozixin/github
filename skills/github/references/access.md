@@ -95,16 +95,25 @@ GET /repos/{owner}/{repo}/releases/latest               # 注意：这是 JSON �
 
 未登录 60 次/小时、带 token 5000 次/小时；批量遍历 blob 很容易吃满配额，先用 `X-RateLimit-Remaining` 响应头看余量（`gh api -i <端点>` 就能看到）。
 
-### gh 直连与代理都不通时才退回 curl 顶 IP
+### gh 打不通时：先挂代理重试，仍不通才退回 curl 顶 IP
 
-`gh` 走 `api.github.com`，`--resolve` 是 curl 参数、对 gh 不适用；挂代理时域名由代理侧解析，本机 hosts 也不参与（规则 3）。**但「gh 直连失败」不等于「gh 不可用」**：2026-11-10 实测 `gh api user`、`gh release list`、`gh skill publish` 在挂上 `HTTPS_PROXY=http://127.0.0.1:7897` 后全部成功。因此顺序是——
+`gh` 走 `api.github.com`，`--resolve` 是 curl 参数、对 gh 不适用；挂代理时域名由代理侧解析，本机 hosts 也不参与（规则 3）。**但「gh 直连失败」不等于「gh 不可用」**：2026-11-10 实测 `gh api user`、`gh release list` 在挂上代理后全部成功，同一天 `gh api user` 直连报 `dial tcp 140.82.121.6:443 ... timeout`。因此顺序是——
 
-1. 先用 shell **直接变量赋值前缀**挂代理重试 gh（不要套 `env` / `timeout` 包装，静默假绿见 `github-skill` 第 7 节）：
+1. 先扫端口、再**用 shell 直接变量赋值前缀**挂代理重试 gh（不要套 `env` / `timeout` 包装，静默假绿见 `github-skill` 第 7 节）。端口不要写死 7897：
 
 ```bash
-HTTPS_PROXY=http://127.0.0.1:7897 HTTP_PROXY=http://127.0.0.1:7897 \
+PYTHONIOENCODING=utf-8 python -c "
+import socket
+for p in (7897,7890,7896,1080,10808,10809,8080,8888):
+    s=socket.socket(); s.settimeout(0.15)
+    print(p,'OPEN' if s.connect_ex(('127.0.0.1',p))==0 else 'CLOSED'); s.close()"
+
+# 用上一步探到 OPEN 的端口
+HTTPS_PROXY=http://127.0.0.1:<端口> HTTP_PROXY=http://127.0.0.1:<端口> \
   "/c/Users/贺新/AppData/Local/Programs/gh/bin/gh.exe" api user --jq .login
 ```
+
+2026-11-10 复测：7897 在监听，同日稍后代理客户端关闭后同一命令报 `dial tcp 140.82.121.6:443 ... timeout`——**端口开没开是每时每刻的状态，不是机器属性**，所以只能当场探。
 
 2. 代理也不通，才改用顶 IP 的 curl 取同一个端点：
 
@@ -122,6 +131,20 @@ curl -s --resolve api.github.com:443:<可用IP> -H "Authorization: Bearer $GITHU
 ```
 
 顶 IP 时只看状态码判成败不够：那组 web 前端 IP（140.82.112.3、140.82.113.3、140.82.113.4、140.82.114.3、140.82.116.3、20.205.243.166）对 api 返回 301，看着"有响应"其实拿不到 JSON。出口判据是响应体能解出目标字段，而不只是 2xx/3xx。
+
+### git 顶 IP 与 curl 顶 IP 是两套写法，不能互相代替
+
+`curl --resolve` 只对 curl 生效。**git 要用 `http.curloptResolve`**（git ≥ 2.55），不能用 `url.<ip>/.insteadOf`：
+
+| 场景 | 写法 | 2026-11-10 实测 |
+|---|---|---|
+| curl 取 REST | `curl --resolve api.github.com:443:<IP> ...` | 200 |
+| git 的 fetch/push/ls-remote | `git -c http.curloptResolve=github.com:443:<IP> ...` | 六个 IP 全成功 |
+| 同上，改成 `-c url.https://<IP>/.insteadOf=https://github.com/` | — | **六个 IP 全失败**，报 `Failed to connect to github.com:443` |
+
+失败机制：`insteadOf` 只改 URL 字符串，git 仍要对**原域名**做一次解析；DNS 被阻断时，连接在拨号前就失败。`curloptResolve` 是在 libcurl 的连接层直接给「域名→IP」映射，不经过系统解析。
+
+**另一条：`curl` 通不代表 `git` 通。** 同一天同一秒，`curl --resolve github.com:443:<IP>` 回 200，而 git 走同一条 IP 报连接失败。所以探通路时要**用真正要用的那个客户端去探**（推代码就用 `git ls-remote` 探，别用 curl 代替）。
 
 写操作（POST/PATCH）同样能用这条通道，但负载编码要另外注意，见下面第五节的 Windows 侧坑。
 

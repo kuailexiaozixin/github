@@ -75,19 +75,59 @@ curl -s -D - -o /dev/null --connect-timeout 5 --max-time 15 \
 
 `x-oauth-scopes` 含 `repo` 才具备建仓与推送能力；为空时回 SKILL.md 第 3 节换凭证，不要跑去改细粒度 token 的权限。
 
-## 2 选通路
+## 2 按本机连通性选通路（不要假定任何一条可用）
 
-三条通路按下面的判据取一条，**任一命中即触发，不并行尝试**：
+**每一趟都从零探测，不假设上一条还通。** 这台机器一天之内出现过四种状态：直连通、直连通而 `gh` 不通、只有代理通、直连与代理都不通但顶 IP 通。任何「上次能用所以这次也行」的写法都会失败。
 
-- `git ls-remote <仓库地址> HEAD` 能打印 SHA：直连可用，走第 3 步。**注意 git 可能正在偷偷走代理**：先 `git config --global --get http.proxy` 看一眼，有值说明这条「直连」其实是经代理的，此时 `gh` 与 `curl` 仍可能不通（它们不读 git 配置）。要判"真直连"，加 `-c http.proxy=` 清掉再试一次。
-- 直连不通且本地代理在监听：走第 3 步的代理前缀写法。代理是否在监听要探，不要照抄端口：
+三条通路各自独立的判据（**先探后用**，一次探测 5–8 秒，宁可慢几秒也别盲发一条推十几秒）：
 
-  ```bash
-  python -c "import socket;print('OPEN' if socket.socket().connect_ex(('127.0.0.1',7897))==0 else 'CLOSED')"
-  ```
+```bash
+# ① 真直连（明确清掉代理，否则量到的是代理）
+GIT_TERMINAL_PROMPT=0 timeout 15 git -c http.proxy= ls-remote https://github.com/<owner>/<repo>.git HEAD
 
-  **2026-11-10 复测：7897 OPEN**（同日 7890／1080／1081／10808／10809 全 CLOSED，且经 7897 之后 `gh api user` 立即正常）。2026-09-25 那天五个端口全 CLOSED。两天读数相反，判据只能是「当场探」。
-- 直连与代理都不通：走第 4 步的多 IP 脚本。
+# ② 代理（先扫端口，再试代理；不要照抄 7897）
+PYTHONIOENCODING=utf-8 python -c "
+import socket
+for p in (7897,7890,7896,1080,10808,10809,8080,8888):
+    s=socket.socket(); s.settimeout(0.15)
+    print(p,'OPEN' if s.connect_ex(('127.0.0.1',p))==0 else 'CLOSED'); s.close()"
+HTTPS_PROXY=http://127.0.0.1:<探到的端口> HTTP_PROXY=http://127.0.0.1:<探到的端口> \
+  timeout 20 git -c http.proxy= ls-remote https://github.com/<owner>/<repo>.git HEAD
+
+# ③ 顶 IP（直连与代理都不通时；用 git 自己的连接层，不用 curl 代测）
+GIT_TERMINAL_PROMPT=0 timeout 25 git -c http.proxy= \
+  -c http.curloptResolve=github.com:443:<IP> -c http.sslVerify=false \
+  ls-remote https://github.com/<owner>/<repo>.git HEAD
+```
+
+**判据只看 `ls-remote` 有没有打印出 SHA。** 不要用 `curl` 的结果代替：2026-11-10 实测同一秒里 `curl --resolve` 打某 IP 回 **200**，而 git 走那条路报 `Failed to connect to github.com:443`——`curl` 通不代表 git 通，两者的 DNS 与连接栈不同。
+
+**为什么顶 IP 必须用 `http.curloptResolve` 而不是 `url.<ip>/.insteadOf`（2026-11-10 实测，这是本技能最重要的一条）：**
+
+| 写法 | 六个 github.com IP | 原因 |
+|---|---|---|
+| `-c url.https://<IP>/.insteadOf=https://github.com/` | **六枚全失败** | git 仍会先解析远端域名，DNS 被阻断时在拨号前就报 `Failed to connect to github.com:443`，`insteadOf` 改不掉这一步 |
+| `-c http.curloptResolve=github.com:443:<IP>` | **六枚全部成功** | 域名→IP 的映射交给 libcurl 在连接层完成，绕开 git 自己的 DNS 解析 |
+
+所以 `push_repo.sh` 已改用后者（脚本头部的注释记了这次变更）。git ≥ 2.55 支持 `http.curloptResolve`；更老的版本没有这一项，`-c` 会被静默忽略、退回真实 DNS。
+
+**代理的两种失效模式，别混为一谈：**
+
+- 代理**进程没在跑**（端口 CLOSED）：此时连 `git push` 都会撞代理几秒后失败，报 `Failed to connect to 127.0.0.1`。本机 `.gitconfig` 里长期写着 `http.proxy=http://127.0.0.1:7897`，代理一关就命中这条——**这是配置残留，不是网络故障**，用 `-c http.proxy=` 清掉即可。
+- 代理**在跑但出口不通**：端口 OPEN、`curl -x` 却超时。这时换端口没用，要换通路。
+
+**TLS 层例外（跨三条通路的最后一级兜底）**：若 git 在任一条通路上都因 **TLS 握手失败**而报错（`schannel: AcquireCredentialsHandle failed: SEC_E_NO_CREDENTIALS`——沙箱/受限运行环境把系统证书存储对该进程隔离了，直连与挂代理的 TLS 层都会挂，但 CONNECT 隧道其实已建立），则不再切通路，而是把 git 的 TLS 后端从默认 schannel 换成 openssl 并显式喂 CA bundle，再带原通路前缀重试：
+
+```bash
+CA="C:/Users/<你>/AppData/Roaming/WPS 灵犀/portable-git/PortableGit/mingw64/etc/ssl/certs/ca-bundle.crt"   # PortableGit 自带，按本机实际位置
+git -c http.sslBackend=openssl -c http.sslCAInfo="$CA" -c http.proxy=http://127.0.0.1:<代理端口> push ...
+```
+
+数据与边界见 `references/access.md` 第五节末；`gh` 是 Go 二进制自带 TLS + 系统根证书，**不受此隔离影响**，仍按挂代理走通，不必换 openssl。
+
+**产出**：一个确定的通路，以及它对应的完整命令前缀（`-c http.proxy=` / `HTTPS_PROXY=...` / `-c http.curloptResolve=...`）。
+
+**出口**：进入第 3 步。**每条通路最多试两轮**，两轮都失败就换下一条，不要在同一通路上反复碰运气；三条都不通才判定为本机网络不可达，把三条的失败原文交给用户（见第 6 步）。
 
 **TLS 层例外（跨三条通路的最后一级兜底）**：若 git 在任一条通路上都因 **TLS 握手失败**而报错（`schannel: AcquireCredentialsHandle failed: SEC_E_NO_CREDENTIALS`——沙箱/受限运行环境把系统证书存储对该进程隔离了，直连与挂代理的 TLS 层都会挂，但 CONNECT 隧道其实已建立），则不再切通路，而是把 git 的 TLS 后端从默认 schannel 换成 openssl 并显式喂 CA bundle，再带原通路前缀重试：
 
@@ -114,10 +154,19 @@ git -C <repo> push -u origin <分支>
 git -C <repo> push origin :<要删除的远端分支>        # 删远端分支属破坏性动作，先确认
 ```
 
-代理在监听时，同一条命令加前缀：
+按第 2 步探到的通路加对应前缀，**三个前缀互斥，不要叠加**：
 
 ```bash
-HTTPS_PROXY=http://127.0.0.1:7897 git -C <repo> push -u origin <分支>
+# 真直连：必须显式清掉全局代理，否则会走 .gitconfig 里那条
+git -c http.proxy= -C <repo> push -u origin <分支>
+
+# 代理（端口用第 2 步探到的那个）
+HTTPS_PROXY=http://127.0.0.1:<端口> HTTP_PROXY=http://127.0.0.1:<端口> \
+  git -c http.proxy= -C <repo> push -u origin <分支>
+
+# 顶 IP（直连与代理都不通时）
+git -c http.proxy= -c http.curloptResolve=github.com:443:<IP> \
+    -c http.sslVerify=false -C <repo> push -u origin <分支>
 ```
 
 推送标签：
@@ -141,7 +190,9 @@ bash "<技能根目录>/github-push/scripts/push_repo.sh" <repo本地目录> <ow
 # 技能根目录 = 本仓库里 github/ 那一层，例：C:\Users\贺新\AppData\Roaming\WPS 灵犀\serverdir\user_skills\github
 ```
 
-脚本内部按四步走：从环境变量或注册表取 token（取不到打印 `NO_TOKEN`）；用 `--resolve github.com:443:<ip>` 逐个探 IP 池；对每个可达 IP 以 `git -c url.https://<ip>/.insteadOf=https://github.com/ -c http.sslVerify=false -c http.version=HTTP/1.1 -c "http.https://<ip>/.extraheader=AUTHORIZATION: basic <base64>" push` 推送；任一成功即停。
+脚本内部按三步走：从环境变量或注册表取 token（取不到、或取到 `None` 字面量，都打印 `NO_TOKEN` 退出）；**用 `git ls-remote` 而不是 curl** 逐个探 IP 池——探测和真正推送走同一条 TLS/HTTP 栈，`curl` 通不代表 `git` 通；对每个可达 IP 以 `git -c http.proxy= -c http.curloptResolve=github.com:443:<ip> -c http.sslVerify=false -c http.version=HTTP/1.1 -c "http.https://github.com/.extraheader=AUTHORIZATION: basic <base64>" push` 推送，任一成功即停。
+
+两条关键配置不要改回去：`-c http.proxy=` 清掉本机 `.gitconfig` 里那条固定代理（代理客户端一关，不清掉就会先撞死端口）；`http.curloptResolve` 而不是 `url.<ip>/.insteadOf`（后者六个 IP 全失败，机制见第 2 步的对照表）。每个 IP 的推送有 180 秒超时，探路 25 秒超时。
 
 脚本里的 `IPS` 与 `references/access.md` 第一节 github.com 那一行是**同一份数据的两处存放，改一处必须同步另一处**。两处不一致时以 access.md 的当日实测为准。
 

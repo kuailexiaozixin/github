@@ -28,7 +28,7 @@ description: "GitHub 访问与克隆子技能——国内网络下把代码取�
 
 **出口**：确定了一类，进第 2 步。判不出来就问用户"要本地跑还是只看"，这是两条不同的通道成本。
 
-## 2 选通道：先直连，不通再顶 IP，再不通走代理
+## 2 选通道：三条都当场探，按结果挑一条（没有固定优先次序）
 
 **输入**：目标 host（`github.com` / `api.github.com` / `raw.githubusercontent.com` / `codeload.github.com` / `objects.githubusercontent.com`）。
 
@@ -38,7 +38,7 @@ curl -s -o /dev/null -w "%{http_code} %{time_total}s\n" --connect-timeout 5 http
 git ls-remote https://github.com/<owner>/<repo>.git        # 克隆类请求的最终判据
 ```
 
-**动作**：直连 200 且 `ls-remote` 出结果时，直接用直连，不要碰 IP。不通时按 `references/access.md` 第一节表里**对应 host** 的那组 IP 用 `--resolve` 顶；表里的数据超过两周或换了网络环境，先跑该文件第二节的 30 秒重测再决定。
+**动作**：三条通路各自独立探测，**用哪个客户端就先用哪个客户端探**——要 `git clone/fetch/push` 就用 `git ls-remote` 探，不要用 `curl` 的 200 代替（2026-11-10 实测过 `curl` 通而 `git` 不通的同一秒）。探的顺序按成本排：直连 → 代理（先扫常见端口）→ 顶 IP。顶 IP 时 git 要用 `-c http.curloptResolve=github.com:443:<IP>`，**不要用 `url.<ip>/.insteadOf`**（后者在当前网络下六个 IP 全失败，机制见 `references/access.md` 第四节末）。IP 取值见该文件第一节对应 host 那一行；数据超过两周或换网络环境，先跑第二节的 30 秒重测。
 
 **产出**：一个可用通道（直连 / 顶 IP / 代理），以及它的适用范围——`--resolve` 只对显式写了该 host 的命令生效。
 
@@ -126,7 +126,7 @@ gh attestation verify 目标文件 --repo <owner>/<repo>         # 再验证明�
 2. `nslookup github.com`：解析失败/超时是 DNS 层，临时 hosts 可应急但 IP 会变（数据见 `references/access.md` 第一节）。
 3. 体积问题：`--depth 1`、`--filter=blob:none`、`--sparse`、或改走第 4 步免克隆。
 4. 要的是 REST 端点能返回的数据：用顶 IP 的 curl 直接取，不依赖 gh 连得上（写法与 IP 分组见 `../references/access.md` 第四节末段）。
-5. 挂代理：`HTTPS_PROXY=http://127.0.0.1:<本机端口> git clone ...`。挂上代理后**去掉**所有 `--resolve`/`insteadOf` 设置，否则流量绕过代理，两头不讨好。
+5. 挂代理：`HTTPS_PROXY=http://127.0.0.1:<探到的端口> git -c http.proxy= clone ...`。端口要当场扫（常见候选见 `references/access.md` 第三节），不要照抄 7897。挂上代理后**去掉**所有 `--resolve` / `curloptResolve` / `insteadOf` 设置，否则流量绕过代理，两头不讨好。
 6. 前缀站兜底：`https://ghfast.top/<完整 GitHub URL>`，取回必做第 5 步校验。
 7. 都不行：把 `curl -v` 的报错原文与日期交给用户，说明是本机网络环境限制，不要连续重试。
 
