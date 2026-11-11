@@ -1,12 +1,12 @@
 # github
 
-GitHub 全场景 **Agent Skill**（遵循 [Agent Skills 开放标准](https://agentskills.io)）：国内网络访问与克隆、推送与认证、仓库运维（issue/PR/CI/release）、分支库（fork）跟进、Projects 看板、Codespaces、开源项目搜索、gh skill 技能管理、gh CLI 配置。一个入口 SKILL.md 分派到 9 个子技能，命令与出口判据全部在子技能里。
+GitHub 全场景 **Agent Skill**（遵循 [Agent Skills 开放标准](https://agentskills.io)）：国内网络访问与克隆、推送与认证、仓库运维（issue/PR/CI/release）、分支库（fork）跟进、Projects 看板、Codespaces、开源项目搜索、gh skill 技能管理、gh CLI 配置，浏览器打不开 GitHub 时诊断并修复系统代理/DNS/hosts 配置。一个入口 SKILL.md 分派到 9 个子技能，命令与出口判据全部在子技能里。
 
 ## 子技能（9 个）
 
 | 子技能 | 主线 |
 |---|---|
-| `github-access` | 拿代码/仓库/文件；访问慢与失败处理 |
+| `github-access` | 拿代码/仓库/文件；访问慢与失败处理；浏览器打不开 GitHub 时的系统代理/DNS/hosts 修复 |
 | `github-push` | 交代码：push、打 tag、核对远端 |
 | `github-ops` | 管仓库：issue、PR、CI、release、安全告警 |
 | `github-fork` | 在别人仓库做长期改动：fork、上游同步 |
