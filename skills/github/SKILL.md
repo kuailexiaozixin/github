@@ -31,6 +31,8 @@ description: "GitHub 全场景技能（统一入口，含 9 个子技能）。�
 
 技能仓库的发布归 `github-skill`：必须用 `gh skill publish` 建 release，不能只靠 `git push` 了事（会缺规范校验与 release）。**但「不走推送主线」不等于「不 push」**：`gh skill publish` 本身不推代码，流程里仍要先把提交 push 到远端，两者是先后两步、不能互相替代，见 `github-skill` 端到端流程第 ③⑤ 步。
 
+**npm 包发布走 Trusted Publishing（OIDC）**：当仓库包含 npm 包且需自动发布时，`github-ops` 第 5.5 节有完整的 publish.yml 模板 + npmjs.com 配置步骤 + 验证证据。免 token、免 2FA、免网页批准，推 v* tag 即自动发布。2026-11 起 npm 直接 publish 需 bypass-2FA 或 stage 批准；2027-01 后统一走 trusted publishing。
+
 子技能之间**允许命令重叠**，这是有意的设计：每份子技能都要能独立读完一条主线，不靠跳转才成立。所以同一条命令会在两三份文件里出现（例如 `gh repo fork`/`gh repo sync` 同时在 github-ops 的仓库生命周期与 github-fork 的分支库跟进里）。重叠处每份都写自己的出口判据，不写"权威在哪一份"，改命令时按校验脚本一次扫全包，不依赖单点引用。
 
 **产出**：一个子技能文件路径，以及该子技能里要进入的步骤号。
