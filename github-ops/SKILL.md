@@ -222,6 +222,81 @@ gh attestation trusted-root > trusted_root.jsonl                  # 离线/内�
 
 **误发处理**：`gh release delete <tag>` 只删 release，`--cleanup-tag` 连 tag 一起删；删已发布的版本前先确认没人已经在依赖它，这是不可恢复动作，需用户明确确认。
 
+## 5.5 npm Trusted Publishing（OIDC）——免 token 自动发布
+
+当仓库包含 npm 包且需要自动发布时，用 GitHub Actions OIDC 签名替代 NPM_TOKEN，无需在 GitHub Secrets 中存储任何 npm 凭证。
+
+**前提**：npm registry 策略变更（2026-11 起），直接 `npm publish` 需 bypass-2FA token 或交互式 2FA；stage-only token 只能 `npm stage publish`（进暂存队列，需网页批准）。Trusted Publishing 是唯一免人工干预的长期方案。2027-01 起 bypass-2FA granular token 将不能再直接 publish。
+
+**配置步骤**：
+
+1. **创建 `.github/workflows/publish.yml`**（参考模板）：
+
+```yaml
+name: publish
+on:
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Dry run only (no publish)"
+        required: false
+        default: false
+        type: boolean
+  push:
+    tags: ['v*']
+permissions:
+  contents: read
+  id-token: write          # OIDC 签名必需
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          registry-url: 'https://registry.npmjs.org'   # 启用 OIDC
+      - run: |
+          npm install -g npm@latest
+          node -v && npm -v
+      - run: npm install --ignore-scripts --no-audit --no-fund
+      - run: npm publish
+        if: ${{ github.event_name != 'workflow_dispatch' || !inputs.dry_run }}
+      - run: npm pack --dry-run
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run }}
+```
+
+关键要点：
+- `id-token: write` 是 OIDC 签名前提，缺少则 npm 无法交换 token
+- `registry-url: 'https://registry.npmjs.org'` 让 setup-node 自动注入 OIDC 认证
+- 触发器用 `push: tags: [v*]` 而非 `release: published`（tag 推上去即触发，不依赖 GitHub Release 对象）
+- 不需要 `NPM_TOKEN` secret，也不需要任何 GitHub 侧的 npm 凭证
+
+2. **在 npmjs.com 配置 Trusted Publisher**（仓库 owner 操作）：
+   - 包设置页 → Settings → Access → Trusted Publishers → Add Trusted Publisher
+   - Provider: `github`
+   - Owner: 仓库所属用户名/组织
+   - Repository: 仓库名（不含 owner 前缀）
+   - Workflow: `publish.yml`（必须与文件名精确匹配）
+   - 可选 Environment: 绑定到 GitHub Environment 增加审批层
+
+3. **验证窗口**：首次配置有 48h 验证窗口，需在此期间完成一次 `npm publish` 验证。验证通过后状态变为 Active，之后所有 publish 全自动。
+
+4. **发布流程**：推 `v*` tag → GitHub Action 自动运行 → `npm publish` 走 OIDC 签名直发 → 无需 2FA、无需网页批准、无需 token。
+
+**验证成功证据**（2026-11-13 dsh-skill-mcp-market 0.5.23）：
+- `_npmUser.name = "GitHub Actions"`
+- `_npmUser.email = "npm-oidc-no-reply@github.com"`
+- `_npmUser.trustedPublisher = {id: "github", oidcConfigId: "c3e239d7-b6b9-410e-b23c-d78230c9dc1b"}`
+- SLSA provenance attestation 自动附加
+
+**注意事项**：
+- Trusted Publishing 只认 `npm publish`（直发），**不认** `npm stage publish`
+- 若 npm 包已存在（非首次发布），不受 48h 验证窗口限制
+- 若 GitHub 仓库有分支保护或 ruleset 限制 tag 推送，需先调整
+- 多个仓库发布同一 npm 包时，只需一个仓库配置 trusted publisher
+- `workflow_dispatch` 手动触发时 `dry_run: true` 可预览 pack 结果而不实际发布
+
 ## 6 校准仓库设置
 
 **输入**：第 1 步记下的仓库与角色（需要管理员权限）。
