@@ -7,15 +7,9 @@ description: "GitHub Agent 技能管理子技能——用 gh skill 从 GitHub �
 
 用 `gh skill` 从 GitHub 仓库**安装、管理、发布 agent 技能**（SKILL.md 技能）。官方定位：*"Install and manage agent skills from GitHub repositories"*。
 
-> **重要**：`gh skill` 处于 **preview** 阶段，行为可能变化；且**仅在较新版本 gh CLI 提供**。旧版本（如 2.78.0）执行 `gh skill` 会返回 `unknown command`——此时先升级 gh CLI 或用下方「版本说明」。
+> **重要**：`gh skill` 处于 **preview** 阶段，行为可能变化；且**仅在较新版本 gh CLI 提供**。旧版本（如 2.78.0）执行 `gh skill` 会返回 `unknown command`——此时换 gh 版本：本机 2026-11-20 实测 2.101.0，六个子命令（install/list/preview/publish/search/update）齐备可用；换版方法见 root `SKILL.md` §3 的 gh 条目（无 winget，取官方 release zip 把两份安装一起换）。
 
-## 何时使用
-
-- 用户要「从 GitHub 安装/搜索/发布 agent 技能」
-- 用户说「gh skill」「技能管理」「装个技能」「把技能发到 GitHub」
-- 管理 SKILL.md 技能的发布（publish）与获取（search/install/update）
-
-### 技能仓库发布决策（先定方向，避免走错路）
+## 技能仓库发布决策（先定方向，避免走错路）
 
 **判断任务方向**：当任务是把**技能仓库**（含 `skills/<name>/SKILL.md` 结构，或 hermes-desktop 这类 agent 技能仓库）的内容推上 GitHub，这是「技能发布」场景，**必须走 `gh skill publish`**，不要用裸 `git push` 手动同步**替代发布**。**这不等于不需要 push**：publish 只打 tag + 建 release、不推代码，正确流程是「push 送代码 → publish 建 release」，见下方端到端流程第 ③⑤ 步。
 
@@ -28,20 +22,9 @@ description: "GitHub Agent 技能管理子技能——用 gh skill 从 GitHub �
 
 > 反模式：`gh skill publish` 会做 agentskills.io 规范校验、建立 `skills/<name>/` 虚拟文件树并创建 release；**只用** `git push` 手动同步技能文件、不跑 publish，会缺失这些（缺校验、缺 release、不遵循强制规则），是错误做法。**识别到「技能仓库」就路由到 gh skill publish，不落 github-push 作为发布动作。** 反过来只跑 publish、不 push 也是错的（见端到端流程第 ③ 步）：publish 不推代码。
 
-## 可用命令
-
-```
-gh skill install    # 安装技能
-gh skill list       # 列出已安装技能
-gh skill preview    # 安装前预览
-gh skill publish    # 发布技能（--dry-run 校验）
-gh skill search     # 搜索技能
-gh skill update     # 更新已安装技能（--all 全部）
-```
-
-别名：`gh skills`。
-
 ## 用法示例
+
+`gh skills` 是 `gh skill` 的别名；六个子命令逐个的用法见本节与「发布实战要点」。
 
 ```bash
 # 搜索技能
@@ -148,17 +131,24 @@ git worktree add --detach <发布目录> "origin/$BRANCH"
 # ② 把本地最新技能内容同步到 <发布目录>/skills/<name>/（本地保持 root 结构不动）
 #    按「本地文件 -> 远端 skills/<name>/ 对应路径」复制/更新/删除；
 #    只保留真实内容差异，剔除 CRLF/LF 行尾噪声（对 git diff 为空的文件还原为远端版）
+#    占位目录判定用结构判据（实测 2026-11-20）：目录内唯一文件是 README 且其内容声明不分发 → 整目录取远端、不得用本地覆盖；
+#      正文里恰好出现“占位”字样的普通文档不是占位（按关键词误判会漏同步该文件）。
+#    BOM / 文件末尾也要还原后再拷贝：编辑器写回丢失会造出伪 diff 或覆盖远端编码（实测：upstream-facts.json 丢 BOM、manifest.json 丢末尾 CRLF）。
+#    差异统计按默认管线 `git diff --numstat`；叠加 -c core.autocrlf=false 会让 autocrlf 管控文件显示整文件重写（±全行数）的假全量，别用它判噪声。
 
 # ③ 【不可跳过】在发布树提交，并把提交推到远端默认分支
 #    gh skill publish 只打 tag + 建 release，不会把本地提交推到远端（2026-11-11 实测）。
 #    漏掉这步会得到「release 已建、命令返回 0，但 tag 指向旧 commit、远端分支没动、
 #    新文件 Not Found」的假绿。按 github-push 第 2/3 步当场探到的通路加前缀。
+#    通路结论只对当步有效（实测 2026-11-20）：同一仓库读阶段（clone）直连超时、顶 IP 可用，一小时后 push 阶段直连可用、顶 IP 反而死——每个写动作前重新探测，不复用读阶段结论。
 git -C <发布目录> add -A
 git -C <发布目录> commit -m "<技能名> vX.Y.Z — <本次改动摘要>"
 git -C <发布目录> push origin "HEAD:$BRANCH"
 
 # ④ 校验（warning 可接受、error 必改）
 gh skill publish --dry-run <发布目录>
+#    常驻 warning 处置：skill body is NNN lines (recommended max 500)=大技能既有形态，勿为消警拆文件；
+#    no active tag protection rulesets=可用 github-ops 第 6 步 gh ruleset 给仓库加 tag 保护消除（可选）。
 
 # ⑤ 发布 + 创建 release（--tag 指定 semver 版本即非交互）
 gh skill publish --tag vX.Y.Z <发布目录>
@@ -171,6 +161,8 @@ gh release view vX.Y.Z --repo <owner>/<repo>
 gh api "repos/<owner>/<repo>/commits/$BRANCH" --jq .commit.tree.sha
 git -C <发布目录> rev-parse HEAD^{tree}
 #    再抽查本次新增的文件在远端确实可见（严格校验返回的是 sha 而非错误 JSON）
+#    取被管道命令的退出码用 ${PIPESTATUS[0]}（bash）或不带管道直跑：cmd | tail 的 $? 是 tail 的——
+#      实测 2026-11-20 push_repo.sh 真值 3（NO_REACHABLE_IP），叠 tail -6 后读成 0，判错通路白跑一轮。
 
 # ⑦ 清理
 git worktree remove <发布目录>
@@ -243,15 +235,15 @@ grep -rlE "apps\.googleusercontent\.com|GOCSPX-|sk-[A-Za-z0-9]{20,}" skills/
 
 ```bash
 cd <发布目录>
-printf 'n\n' | HTTPS_PROXY=http://127.0.0.1:<代理端口> HTTP_PROXY=http://127.0.0.1:<代理端口> \
-  "$USERPROFILE/AppData/Local/Programs/gh/bin/gh.exe" skill publish --tag v1.33.1 .
+printf 'n\n' | "$USERPROFILE/AppData/Local/Programs/gh/bin/gh.exe" skill publish --tag vX.Y.Z .
 ```
+
+挂不挂代理前缀按 github-push 第 2 步当场探测决定，不要把示例里的前缀当固定项：实测 2026-11-20 照历史示例挂代理前缀发布，而该端口当场已 CLOSED，`connectex` 拒连、release 未创建（失败干净无残留，去前缀直连 api 即成）。
 
 发布后**必须回查远端**才算成功，不能只看退出码：
 
 ```bash
-HTTPS_PROXY=http://127.0.0.1:<代理端口> HTTP_PROXY=http://127.0.0.1:<代理端口> \
-  "$USERPROFILE/AppData/Local/Programs/gh/bin/gh.exe" release view v1.33.1 --repo <owner>/<repo>
+"$USERPROFILE/AppData/Local/Programs/gh/bin/gh.exe" release view vX.Y.Z --repo <owner>/<repo>
 ```
 
 **⑥ 另一种假绿：release 建了但内容是旧的（2026-11-11 实测）**：与第 ⑤ 条相反，这次 `publish` 打印 `✓ Published v5.18.0`、退出码 0、release 与 tag 都真实存在，但 tag 指向的是**远端已有的旧 commit**，远端默认分支（当次为 `main`）没动，本次新增文件在远端全部 `Not Found`。成因是漏了端到端流程第 ③ 步的 push。判据不能是「release 在不在」，而必须是「远端默认分支的内容指纹（tree sha）等于本地发布树的 tree sha」，并抽查新文件确实可见。回查命令见端到端流程第 ⑥ 步。
@@ -274,24 +266,6 @@ printf '%s' '{"body":"**Full Changelog**: https://github.com/<owner>/<repo>/comp
 - **通路按当场探测结果选，没有「国内环境一律走代理」这回事**：2026-11-11 实测同一台机器上 git 直连被 reset、顶 IP 全断、只有本机代理可用，但 `gh` 直连 `api.github.com` 却是通的；另一天则直连可用、代理全关。按 `SKILL.md` 第 4 步的三行自检和 `github-push` 第 2 步选路，端口不要照抄任何固定值。
 - 需要挂代理时：`git -c http.proxy=http://127.0.0.1:<当场探到的端口> ... push`；`gh` 与 REST 走 `HTTPS_PROXY`/`HTTP_PROXY` 环境变量。挂代理时**不要**再叠加 `--resolve` / `curloptResolve`，否则流量绕过代理。
 - push 卡住（疑似认证等待）时先 `gh auth setup-git` 配置 credential helper。
-
-## 版本说明
-
-`gh skill` 是 preview 功能，需要较新的 gh CLI。**本机现为 gh 2.101.0，`gh skill` 及其全部子命令（install/list/preview/publish/search/update）均可用**；`ruleset`/`attestation`/`agent-task`/`licenses`/`preview` 等新命令也已就位。若其他环境 `gh skill` 报 `unknown command`：
-
-```bash
-# 检查本地版本
-gh --version
-# 升级 gh CLI（Windows 用 winget / 官网安装包）
-winget upgrade GitHub.cli
-# 升级后重新验证
-gh skill --help
-```
-
-## 与其它子技能的关系
-
-- 从 GitHub **发布/分享技能** 时，底层仍是 push 与 Release，走 `github-push`、`github-ops` 两条主线。
-- 本子技能聚焦 `gh skill` 这一**技能管理专属命令**（安装/搜索/发布/更新 SKILL 技能）。
 
 ## 相关
 

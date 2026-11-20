@@ -1,6 +1,6 @@
 ---
 name: github
-description: "GitHub 全场景技能（统一入口，含 9 个子技能）。覆盖国内网络下访问与克隆、推送与认证、仓库运维主线、分支库（fork）的建与跟、Projects 看板、Codespaces 云端环境、开源项目搜索筛选、agent 技能管理、gh 自身的登录配置与扩展、浏览器打不开 GitHub 时的系统代理/DNS/hosts 诊断与修复。触发关键词：访问 GitHub、克隆仓库、git clone 慢/失败、下载 GitHub 文件、GitHub 网络不通、push/推送、git push 失败、多IP推送、GitHub 认证、gh auth、gh 命令、GitHub 维护、处理 issue、分诊、管理 PR、合并 PR、CI 失败、发布 release、上传产物、安全告警、Dependabot、ruleset、fork、分支库、上游同步、gh repo sync、看板、Project 排期、codespace、云端开发环境、搜开源项目、开源项目推荐、github搜索、/github-search、gh skill、技能管理、技能市场、MCP 市场、MCP 连接器、安装技能、安装 MCP、浏览器打不开 GitHub、无法访问 GitHub 网站、恢复浏览器访问、修复访问。"
+description: "GitHub 全场景技能（统一入口，含 9 个子技能）。覆盖国内网络下访问与克隆、推送与认证、仓库运维主线、分支库（fork）的建与跟、Projects 看板、Codespaces 云端环境、开源项目搜索筛选、agent 技能管理、gh 自身的登录配置与扩展、浏览器打不开 GitHub 时的系统代理/DNS/hosts 诊断与修复。触发关键词：访问 GitHub、克隆仓库、git clone 慢/失败、下载 GitHub 文件、GitHub 网络不通、push/推送、git push 失败、多IP推送、GitHub 认证、gh auth、gh 命令、GitHub 维护、处理 issue、分诊、管理 PR、合并 PR、CI 失败、发布 release、上传产物、安全告警、Dependabot、ruleset、fork、分支库、上游同步、gh repo sync、看板、Project 排期、codespace、云端开发环境、搜开源项目、开源项目推荐、github搜索、/github-search、gh skill、技能管理、技能市场、安装技能、浏览器打不开 GitHub、无法访问 GitHub 网站、恢复浏览器访问、修复访问。"
 ---
 
 # GitHub 全场景技能
