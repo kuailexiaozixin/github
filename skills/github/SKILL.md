@@ -1,6 +1,6 @@
 ---
 name: github
-description: "GitHub 全场景技能（统一入口，含 9 个子技能）。覆盖国内网络下访问与克隆、推送与认证、仓库运维主线、分支库（fork）的建与跟、Projects 看板、Codespaces 云端环境、开源项目搜索筛选、agent 技能管理、gh 自身的登录配置与扩展、浏览器打不开 GitHub 时的系统代理/DNS/hosts 诊断与修复。触发关键词：访问 GitHub、克隆仓库、git clone 慢/失败、下载 GitHub 文件、GitHub 网络不通、push/推送、git push 失败、多IP推送、GitHub 认证、gh auth、gh 命令、GitHub 维护、处理 issue、分诊、管理 PR、合并 PR、CI 失败、发布 release、上传产物、安全告警、Dependabot、ruleset、fork、分支库、上游同步、gh repo sync、看板、Project 排期、codespace、云端开发环境、搜开源项目、开源项目推荐、github搜索、/github-search、gh skill、技能管理、技能市场、MCP 市场、MCP 连接器、安装技能、安装 MCP、浏览器打不开 GitHub、无法访问 GitHub 网站、恢复浏览器访问、修复访问。"
+description: "GitHub 全场景技能（统一入口，含 9 个子技能）。覆盖国内网络下访问与克隆、推送与认证、仓库运维主线、分支库（fork）的建与跟、Projects 看板、Codespaces 云端环境、开源项目搜索筛选、agent 技能管理、gh 自身的登录配置与扩展、浏览器打不开 GitHub 时的系统代理/DNS/hosts 诊断与修复。触发关键词：访问 GitHub、克隆仓库、git clone 慢/失败、下载 GitHub 文件、GitHub 网络不通、push/推送、git push 失败、多IP推送、GitHub 认证、gh auth、gh 命令、GitHub 维护、处理 issue、分诊、管理 PR、合并 PR、CI 失败、发布 release、上传产物、安全告警、Dependabot、ruleset、fork、分支库、上游同步、gh repo sync、看板、Project 排期、codespace、云端开发环境、搜开源项目、开源项目推荐、github搜索、/github-search、gh skill、技能管理、技能市场、安装技能、浏览器打不开 GitHub、无法访问 GitHub 网站、恢复浏览器访问、修复访问。"
 ---
 
 # GitHub 全场景技能
@@ -51,8 +51,18 @@ description: "GitHub 全场景技能（统一入口，含 9 个子技能）。�
 
 ## 3 历史环境读数（只用于理解机制，不得当作当前状态）
 
-> **读法约束**：本节全部是**带日期的历史快照**，记录的是「那天这台机器是什么样」，用于解释「为什么状态会变、为什么必须当场探测」。**不得据此推断当前有没有代理、哪个端口在监听、git 全局配置写了什么、哪个 IP 可用**。任何执行动作一律以第 4 步的当场自检与 `git config --global --get http.proxy` 的实际输出为准。历史上出现过的具体值（端口、IP、配置串）都不是默认值，不要照抄进命令。
+> **读法约束**：本节全部是**带日期的历史快照**，记录的是「那天这台机器是什么样」，用于解释「为什么状态会变、为什么必须当场探测」。**不得据此推断当前有没有代理、哪个端口在监听、git 全局配置写了什么、哪个 IP 可用**。任何执行动作一律以第 4.1 节的一键自检脚本与 `git config --global --get http.proxy` 的实际输出为准。历史上出现过的具体值（端口、IP、配置串）都不是默认值，不要照抄进命令。
 
+
+### 凭证能力边界（写操作前快查；详见 4.3）
+
+| 凭证 | 前缀 | 能力 | 禁止 |
+|---|---|---|---|
+| 环境变量 GITHUB_TOKEN | gho_ | OAuth（gist,read:org,repo,workflow） | 看板（缺 project scope） |
+| 系统钥匙串同账号 | 同 gho_ | 同左 | 同左 |
+| 技能根 .env PAT | ghp_ | **零 scope classic，只读** | **一切写操作**（一律 404） |
+
+判别凭证类型**只看前缀**，不要用「X-OAuth-Scopes 为空」判型（零 scope classic 同样返回空）。
 标 2026-09-25 的是当天读数，标 2026-11-10 的是复测读数；两者不一致只说明**状态会翻转**，不构成「以哪天为准」的规则。2026-11-11 复测已再次翻转：`http.proxy` 全局配置为空、git 真直连被 reset、顶 IP 候选全不可达、`gh` 直连却可用。所以每趟任务都要重新探测，不要照抄任何一天。
 
 - `gh` 版本 2.101.0 (2026-09-15)。全部子技能里的参数、`--json` 字段名、退出码都取自这一版本机 `--help` 原文。升级后必须重跑受影响段落的 help 对照。本机没有 winget，`gh` 也没有 `upgrade` 子命令——换版本只能下官方 release 的 zip 解出 `bin/gh.exe`，两份安装一起换。
@@ -63,33 +73,50 @@ description: "GitHub 全场景技能（统一入口，含 9 个子技能）。�
 - **直连与代理要分开记，不要合成一句「网络可用」。** 2026-11-10 当天读数：`curl` 直连 `github.com`／`api.github.com`／`codeload.github.com` 三个都 000（各挂 5 秒超时），只有 `raw.githubusercontent.com` 回 301；同一时刻 `git ls-remote https://github.com/cli/cli HEAD` **直连可用**、`gh api user` **直连不通**、两者各自挂上 `http://127.0.0.1:7897` 之后都通。**那天的**成因是当时 git 全局配置里有一条 `http.proxy=http://127.0.0.1:7897`，git 因此在走代理、curl 与 gh 不走；**该配置 2026-11-11 复测已不存在**，不要据此推断今天的成因。可保留的方法是「`git 通但 gh 不通` 不代表网络没问题，先查 `git config --global --get http.proxy`」。当天五个候选端口只有 7897 在监听（7890／1080／1081／10808／10809 全 CLOSED）。
 - 2026-09-25 那天 `github.com` 与 `api.github.com` 直连都可用、五个代理端口都没监听。两组读数不矛盾，是两天网络状态不同：代理开没开、出口通不通都随当天变，所以每次任务都要按当场探测结果选通路，不要照抄前一天。
 
-## 4 开工前的连通性自检（30 秒，任何 GitHub 任务都先跑）
+## 4 开工前的连通性自检（一条命令，30 秒内）
 
-**不要假定「上次能连所以这次也能」。** 这台机器一天之内出现过：直连通、直连通而 `gh` 不通、只有代理通、直连与代理都不通但顶 IP 通、以及代理客户端关掉后 `git` 撞死端口。任何写死的通路都会在某一刻失效。
+**不要假定「上次能连所以这次也能」。** 本机一天之内出现过：直连通、直连而 gh 不通、只有代理通、直连代理都不通但顶 IP 通、代理客户端关掉后 git 撞死端口。任何写死的通路都会在某个时刻失效。
+
+### 4.1 一键自检（替代旧的手工三行命令）
+
+一条命令量出「直连 / gh 直连 / 系统代理 / 顶 IP」四条路，输出结构化 JSON，agent 直接读 verdict 走对应通路：
 
 ```bash
-# 三行分别量：git 直连 / gh 直连 / 本机代理端口
-GIT_TERMINAL_PROMPT=0 timeout 15 git -c http.proxy= ls-remote https://github.com/cli/cli HEAD   # 有 SHA = 直连通
-timeout 20 "$USERPROFILE/AppData/Local/Programs/gh/bin/gh.exe" api user --jq .login              # 有账号名 = gh 通
-PYTHONIOENCODING=utf-8 python -c "
-import socket
-for p in (7897,7890,7896,1080,10808,10809,8080,8888):
-    s=socket.socket(); s.settimeout(0.15)
-    print(p,'OPEN' if s.connect_ex(('127.0.0.1',p))==0 else 'CLOSED'); s.close()"
+python <github技能根>/github-push/scripts/probe_github_oneclick.py
+# 输出示例：
+# {"direct_git": true, "direct_gh": true, "system_proxy": "127.0.0.1:7897",
+#  "open_proxy_port": "7897", "top_ip_candidates": [], "verdict": "direct", "hint": "..."}
 ```
 
-按结果分派，**三条互不替代**：
+**代理端口不再写死**：脚本先读 Windows 系统代理（注册表 `Internet Settings` 的 `ProxyServer`/`ProxyEnable`），再回退 `HTTPS_PROXY`/`HTTP_PROXY` 环境变量，最后才扫常见端口；顶 IP 候选**当场 DNS 解析 + 连通性探测**，不照抄 access.md 的历史表。
 
-| git 直连 | gh | 代理 | 含义与做法 |
-|---|---|---|---|
-| 通 | 通 | — | 最省事，直接干活 |
-| 通 | 不通 | — | `gh` 那条要挂代理（`gh` 不读 git 的 `http.proxy`），见 `github-push` 第 2 步 |
-| 不通 | — | OPEN | 挂代理做；`git` 加 `-c http.proxy=` 排除全局代理残留的干扰（本机是否真有残留先查 `git config --global --get http.proxy`，没有也不影响加这一项） |
-| 不通 | 不通 | CLOSED | 走顶 IP：`git -c http.curloptResolve=...`；`gh` 的任务改用 curl 顶 IP 取同端点 |
-| 全不通 | 全不通 | CLOSED | 三条通路各试两轮后判定本机网络不可达，把三份失败原文交用户 |
+### 4.2 自动降级链（确定性流水线，逐级 5–12s 超时）
 
-细节与 IP 取值见 `github-push` 第 2 步、`references/access.md` 第一/三/四节。浏览器打不开而命令行能通（或都通不了）、怀疑系统代理/DNS 配置层问题时，走 `github-access` 第 7 步诊断与修复。
+verdict 按优先级直接给通路，**不再人工判断「三条互不替代」**：
 
+| verdict | 含义 | 做法 |
+|---|---|---|
+| `direct` | git 与 gh 都直连通 | 直接干活 |
+| `git-direct-only` | git 直连通、gh 不通 | git 直连；gh 挂系统代理（`gh` 不读 git 的 http.proxy） |
+| `proxy` | 只有代理通 | 全部挂 `http://127.0.0.1:<open_proxy_port>`（git 加 `-c http.proxy=`，gh 加 `HTTPS_PROXY=`） |
+| `topip` | 直连与代理都不通 | git 加 `-c http.curloptResolve=github.com:443:<top_ip_candidates[0]>`；gh 用 curl 顶 IP 取同端点 |
+| `none` | 三条各试两轮仍不可达 | 把失败原文交用户，不要继续盲试 |
+
+**降级是顺序的**：`direct → proxy → topip`，每级 5s 无响应就进下一级；某级命中即停。脚本的 `top_ip_candidates` 已把「顶 IP 要当场重测」内置，无需再单独跑 access.md 的探测。
+
+### 4.3 写操作前的凭证快查（对照表，一眼能查）
+
+| 凭证 | 前缀 | 能力 | 允许 | 禁止 |
+|---|---|---|---|---|
+| 环境变量 `GITHUB_TOKEN` | `gho_` | OAuth，scope=`gist,read:org,repo,workflow` | 读写仓库、push、release | 看板（缺 `project` scope，需按 github-cli 补） |
+| 系统钥匙串同账号 | 同上 | 同 gho_ | 同上 | 同上 |
+| 技能根 `.env` PAT | `ghp_` | **零 scope classic** | 读公开仓库、提升匿名额度 | **一切写操作**（建仓/push/release 一律 404） |
+
+判别只看**前缀**（`ghp_` classic / `github_pat_` 细粒度 / `gho_` OAuth），**不要**用「X-OAuth-Scopes 为空」判类型——零 scope classic 与无 scope 都返回空。写操作前按 `github-push` 第 1 步核对 scope。
+
+### 4.4 浏览器打不开而命令行能通（或都通不了）
+
+怀疑系统代理/DNS/hosts 配置层问题时，走 `github-access` 第 7 步诊断与修复；细节与 IP 取值见 `references/access.md` 第一/三/四节（**历史表只用于理解机制，取值一律以 4.1 脚本当场输出为准**）。
 ## 红线
 
 - 破坏性动作（force push、删远端分支、删仓库、删已发布 release、`gh repo sync --force`）执行前须向用户确认，说明会丢什么。
